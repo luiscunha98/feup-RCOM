@@ -2,6 +2,10 @@
 //
 // Modified by: Eduardo Nuno Almeida [enalmeida@fe.up.pt]
 
+/**************************************************     NOTE    **********************************************************/
+/***** This code is not fully correct the one in the labs computers is the better looking one (NEED TO UPDATE LATER) *****/
+/*************************************************************************************************************************/
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,21 +40,49 @@ volatile int STOP = FALSE;
 int alarmEnabled = FALSE; 
 int alarmCount = 0; 
 
-//Time out flag
-int timeout = TRUE; 
+//Global Variables for Functions
 
+struct termios oldtio;
+
+//File Descriptor 
+int fd = 0; 
+
+//setFrame 
+uint8_t setFrame[FRAME_SIZE]; 
 
 // --- FUNCTIONS --- //
 
+int checkForAlarmCount(){
+    if(alarmCount == MAXATTEMPTS){
+
+        printf("Something went wrong while receiving a response from the receiver. Ending the execution due to an error\n"); 
+        sleep(1); 
+        // Restore the old port settings
+        if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
+        {
+            perror("tcsetattr");
+            exit(-1);
+        }
+        close(fd);
+        exit(-1); 
+    }
+}
+
+//Function to ease the job of sending the set Frame (in order to not have duplicate code)
+void sendSetFrame(){
+    write(fd, setFrame, FRAME_SIZE); 
+}
 
 //Alarm function handler
 void alarmHandler(int signal)
 {
-    alarmEnabled = FALSE;
-    alarmCount++;
-    timeout = TRUE; 
+    alarmEnabled = FALSE; //Disables Alarm Flag (Alarm not active at the momment)
+    alarm(3); // Set alarm to be triggered in 3s (time-out time)
+    alarmCount++; //Increases the number of attempts (number of times alarm was triggered)
+    alarmEnabled = TRUE; //Enables Alarm Flag (Alarm currently active)
+    sendSetFrame(); //Resends setFrame (void params, once the fd and setFrame are global variables to make the job easier)
+    checkForAlarmCount(); //This function is necessary to "bypass" the buggy go to behaviour of the alarmHandler function
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -69,7 +101,7 @@ int main(int argc, char *argv[])
 
     // Open serial port device for reading and writing, and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
-    int fd = open(serialPortName, O_RDWR | O_NOCTTY);
+    fd = open(serialPortName, O_RDWR | O_NOCTTY);
 
     if (fd < 0)
     {
@@ -77,7 +109,6 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    struct termios oldtio;
     struct termios newtio;
 
     // Save current port settings
@@ -127,7 +158,6 @@ int main(int argc, char *argv[])
     int pos = 1;  
 
     //Create SET Frame
-    uint8_t setFrame[FRAME_SIZE]; 
     setFrame[0] = FRAME_FLAG; 
     setFrame[1] = FRAME_A; 
     setFrame[2] = SETFRAME_C; 
@@ -143,19 +173,12 @@ int main(int argc, char *argv[])
     //NEEDS ALARM FIX (FOR SOME REASON ALARM IS NOT FULLY WORKING
     //IT JUST SEEMS TO BE STUCK ON AN INFINITE LOOP)
 
-    while(alarmCount < MAXATTEMPTS){
+        //Sends SET Frame for the first time 
+        sendSetFrame(); 
 
-        if(alarmEnabled == FALSE && timeout == TRUE){
-            alarm(3); // Set alarm to be triggered in 3s (time-out time)
-            alarmEnabled = TRUE;  //Enables Alarm flag
-            timeout = FALSE;  //Disables Timeout flag
-        }
-
-        //Sends SET Frame
-        int bytes = write(fd, setFrame, FRAME_SIZE); 
-        //printf("%d bytes written\n", bytes); 
-        // Wait until all bytes have been written to the serial port
-        sleep(1);
+        //Activates Alarm for the first time
+        alarm(3); 
+        alarmEnabled = TRUE; 
 
         /// --- STATE MACHINE PART --- ///
 
@@ -165,10 +188,9 @@ int main(int argc, char *argv[])
         //State Machine Variable -> Helps track the current state
         int currState = 0;   
 
-        //Read a frame from the serial port  
+        //Read a frame from the serial port -> Cycle Stops if a valid frame has been read (STOP = TRUE) or when the max number of attemps have been reached (alarmCount == MAXATTEMPTS)
         while (STOP == FALSE){    
             //IMPORTANT NOTE: The char must always be read inside the state, otherwise if it gets read outside the switch ("directly in the loop") the state machine will "break"    
-                
             //STATE MACHINE IN ORDER TO PROCESS THE RECEIVER READING
             switch (currState){
                 case STATE0: //read 1 char
@@ -199,7 +221,7 @@ int main(int argc, char *argv[])
                     break;
                 case STATE2: //read 1 char & save char
                     read(fd, aux_buf, 1);
-                    if(*aux_buf != FRAME_FLAG && !timeout){
+                    if(*aux_buf != FRAME_FLAG){
                         currState = 2; 
                         //Saves char
                         uaFrame[pos] = (*aux_buf); 
@@ -234,7 +256,6 @@ int main(int argc, char *argv[])
                     printf("Something went wrong while processing SET Frame\n"); 
                     break;
             }
-        }
     }
 
     if(STOP == FALSE){

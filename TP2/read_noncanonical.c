@@ -175,7 +175,6 @@ int main(int argc, char *argv[])
                     int bytes = write(fd, uaFrame, FRAME_SIZE); 
                     //printf("%d bytes written\n", bytes);
                     // Wait until all bytes have been written to the serial port
-                    sleep(1);
                     STOP = TRUE; 
                 }
                 else{
