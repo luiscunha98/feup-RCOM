@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     //UA Frame
-    uint8_t uaFrame[FRAME_SIZE] = {0}; 
+    char uaFrame[FRAME_SIZE] = {0}; 
     uaFrame[0] = FRAME_FLAG; 
     uaFrame[1] = FRAME_A;
     uaFrame[2] = UAFRAME_C; 
@@ -99,12 +99,12 @@ int main(int argc, char *argv[])
     uaFrame[4] = FRAME_FLAG;  
 
     //SET Frame
-    uint8_t setFrame[FRAME_SIZE] = {0};
+    char setFrame[FRAME_SIZE] = {0};
     setFrame[0] = FRAME_FLAG;
     setFrame[4] = FRAME_FLAG; 
 
     //Auxiliary buffer to help process the byte read
-    uint8_t aux_buf[1] = {0}; 
+    char aux_buf[1] = {0}; 
 
     //pos = 1, because pos = 0 and pos = 4 are always equal to the frame flag so we won't fill them in our state machine
     int pos = 1;  

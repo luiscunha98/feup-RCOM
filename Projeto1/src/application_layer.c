@@ -10,6 +10,28 @@
 //Custom header files
 #include "application_layer.h"
 #include "link_layer.h"
+#include "frame.h"
+
+typedef enum{
+    SET, 
+} frameType; 
+
+void assembleFrame(char* frame, frameType frametype){
+    switch (frametype)
+    {
+    case SET:
+        frame[0] = FRAME_FLAG; 
+        frame[1] = FRAME_A; 
+        frame[2] = SETFRAME_C; 
+        frame[3] = SETFRAME_BCC; 
+        frame[4] = FRAME_FLAG;
+        break;
+    default:
+        perror("Invalid frame type"); 
+        break;
+    }
+}
+
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
@@ -30,12 +52,12 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         exit(-1);
     }
 
-    int flag = 0; 
+    LinkLayerRole llrole; 
     
-    if(strstr(role, "tx") == 0) //Transmiter
-        flag = 0; 
-    else if (strstr(role, "rx") == 0) //Receiver
-        flag = 1; 
+    if(strcmp(role, "tx") == 0) //Transmiter
+        llrole = LlTx; 
+    else if (strcmp(role, "rx") == 0) //Receiver
+        llrole = LlRx; 
     else{
         perror(role); 
         return; 
@@ -43,7 +65,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     appLayer applicationl;
     applicationl.fileDescriptor = fd; 
-    applicationl.status = flag; 
+    applicationl.status = llrole; 
 
     linkLayer llayer;
     if((sizeof(llayer.port)/sizeof(char)) >= (sizeof(serialPort)/sizeof(char)))
@@ -54,7 +76,18 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     llayer.sequenceNumber = 0; 
     llayer.timeout = timeout; 
     llayer.numTransmissions = nTries; 
+    llayer.role = llrole; 
+    llayer.fd = applicationl.fileDescriptor;
 
-    llopen(llayer); 
+    frameType frametype; 
+
+    if(llrole == LlTx){ 
+        frametype = SET; 
+        assembleFrame(llayer.frame, frametype); 
+        if(llopen(llayer) == 1) perror("LLOPEN: Something Went Wrong while trying to establish the connection"); 
+    } 
+    else if(llrole == LlRx){ 
+        if(llopen(llayer) == 1) perror("LLOPEN: Something Went Wrong while trying to establish the connection");  
+    }
 
 }

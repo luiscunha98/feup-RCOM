@@ -48,7 +48,7 @@ struct termios oldtio;
 int fd = 0; 
 
 //setFrame 
-uint8_t setFrame[FRAME_SIZE]; 
+char setFrame[FRAME_SIZE]; 
 
 // --- FUNCTIONS --- //
 
@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     //UA Frame
-    uint8_t uaFrame[FRAME_SIZE]; 
+    char uaFrame[FRAME_SIZE]; 
     uaFrame[0] = FRAME_FLAG; 
     uaFrame[4] = FRAME_FLAG; 
 
@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
         /// --- STATE MACHINE PART --- ///
 
         //Auxiliary buffer to help process the byte read
-        uint8_t aux_buf[1] = {0}; 
+        char aux_buf[1] = {0}; 
 
         //State Machine Variable -> Helps track the current state
         int currState = 0;   
@@ -259,6 +259,7 @@ int main(int argc, char *argv[])
     }
 
     if(STOP == FALSE){
+        printf("Tou aqui"); 
         printf("Something went wrong while receiving a response from the receiver\n"); 
     }
 

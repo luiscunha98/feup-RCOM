@@ -22,6 +22,8 @@ typedef struct {
     unsigned int numTransmissions; /*Número de tentativas em caso de
     falha*/
     char frame[MAX_PAYLOAD_SIZE]; /*Trama*/
+    LinkLayerRole role; /*TRANSMITTER | RECEIVER */
+    int fd; /*Descritor correspondente à porta série*/
 } linkLayer; 
 
 // MISC
