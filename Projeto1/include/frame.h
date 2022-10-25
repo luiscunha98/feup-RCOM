@@ -5,6 +5,7 @@
 //Global Frame info
 #define FRAME_FLAG 0x7E
 #define FRAME_A 0x03
+#define llClose_FRAME_A 0x01
 
 //SET Frame info
 #define SETFRAME_C 0x03
@@ -13,6 +14,25 @@
 //UA Frame info
 #define UAFRAME_C 0x07
 #define UAFRAME_BCC 0x04
+
+//Control Frame Info
+#define CTRL_START 0x02
+#define CTRL_END 0x03
+
+//Byte Stuffing 
+#define ESC 0X7D
+
+//Information Frame
+#define IFRAME0 0x00
+#define IFRAME1 0x40
+
+//DISC Frame info
+#define DISCFRAME_C 0x0B
+#define DISCFRAME_BCC 0x0A
+
+//UA llclose Frame info
+#define UAcloseFRAME_C 0x07
+#define UAcloseFRAME_BBC 0x06
 
 // -- STATE MACROS JUST TO MAKE IT MORE READABLE -- //
 #define STATE0 0

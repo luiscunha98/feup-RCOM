@@ -9,6 +9,13 @@ typedef struct {
     int status; /*TRANSMITTER | RECEIVER*/
 } appLayer; 
 
+typedef struct{
+    FILE* file;
+    char* fileName; 
+    int fileSize;
+}fileInformation;
+
+
 // Application layer main function.
 // Arguments:
 //   serialPort: Serial port name (e.g., /dev/ttyS0).
