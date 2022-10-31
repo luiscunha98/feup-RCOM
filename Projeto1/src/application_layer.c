@@ -43,8 +43,6 @@ int assembleCtrlPacket(uint8_t CTRL_Field, char* packet){
 
 typedef enum{
     SET, 
-    START,
-    STOP,
 } frameType; 
 
 void assembleFrame(char* frame, frameType frametype){
@@ -62,6 +60,7 @@ void assembleFrame(char* frame, frameType frametype){
         break;
     }
 }
+
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
@@ -125,6 +124,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             //llclose()
             exit(-1); 
         }
+
         fileInfo.file = file; //Gets the file pointer
         fileInfo.fileName = filename; //Gets the file name
         getFileSize(); //Gets the file size
@@ -139,18 +139,22 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             //Calls llclose()
         }
 
+        printf("Tou aqui 1\n"); 
+
         //Assembles Data Packet
         int filebytesread = 0; 
         int filereadsz = 0; 
 
         //Reads the contents of the file
         while(1){
-            if(ferror(fileInfo.file) || feof(fileInfo.file)){
+            if(ferror(fileInfo.file)){
                 perror("Something Went Wrong while trying to read file's content");
                 exit(-1); 
             }
 
-            if(filereadsz == fileInfo.fileSize)
+            printf("File Bytes Read: %d \n", filebytesread); 
+
+            if((filebytesread == fileInfo.fileSize) || feof(fileInfo.file))
                 break;
             
             //Data Field Assemble (P1..Pn)
@@ -170,7 +174,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 //Calls llclose()
             }
 
-            filebytesread = filebytesread + filereadsz; //Update bytes read
+            //llwrite returned without any errors
+            filebytesread += filereadsz; //Update bytes read
             memset(llayer.frame, 0, MAX_PAYLOAD_SIZE); //"Resets frame" by setting all its to 0
         }
 
@@ -185,12 +190,10 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
         //llclose() to finish the tranmission
     } 
-    else if(llrole == LlRx){ 
+    else if(llrole == LlRx){                                                
         //llopen() part -> OPENING THE CONNECTION PART
         if(llopen(llayer) == 1) perror("LLOPEN: Something Went Wrong while trying to establish the connection");  
-
-        /* DO THIS PART LATER */
-
+        
     }
     else
         perror("Invalid Role"); 

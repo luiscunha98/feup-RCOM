@@ -29,6 +29,9 @@ volatile int STOP = FALSE;
 int alarmEnabled = FALSE; 
 int alarmCount = 0;
 
+//llread() global variables
+int localC = 0x00; 
+
 /////////////// UTILS FUNCTIONS ///////////////
 sendTxFrame(){
     write(conParameters.fd, txFrame, txFrameSize); 
@@ -69,9 +72,9 @@ char* add_frame_header(unsigned char* stuffed_frame, int *size){
     unsigned char* ret = (char*)malloc(*size+5);
 	ret[0] = FRAME_FLAG;
 	ret[1] = FRAME_A;
-	if(conParameters.sequenceNumber == 0)
+	if(conParameters.sequenceNumber % 2 == 0) //Pair values will have sequence number = 0 (0x00)
         ret[2] = IFRAME0; 
-    elseif(conParameters.sequenceNumber == 1)
+    else if(conParameters.sequenceNumber % 2 != 0) //Odd values will have sequence number = 1 (0x40)
         ret[2] = IFRAME1; 
     else{
         perror("Invalid Sequence Number"); 
@@ -89,7 +92,50 @@ char* add_frame_header(unsigned char* stuffed_frame, int *size){
 
 
 /////////////// LLREAD STUFF ///////////////
-//byteDestuffing
+//Recebe o packet stuffed e retorna o packet destuffed + a posição do bcc2 por referência
+char* destuffing(char* stuffedBuffer, int* size){
+    int stuffSize = 0; 
+    stuffSize = sizeof(stuffedBuffer)/sizeof(char); 
+    char destuffedBuffer[MAX_PAYLOAD_SIZE]; 
+
+    for(int i=0; i<stuffSize; i++){
+        if(stuffedBuffer[i] != ESC){ //Verifies it is hasn't been stuffed
+            destuffedBuffer[*size] = stuffedBuffer[i]; 
+            *size++; 
+        }
+        else{ //Otherwise destuff the sequence by looking at the next byte
+            if(stuffedBuffer[i+1] == 0x5D){ 
+                destuffedBuffer[*size] = ESC;
+                *size++;  
+            }
+            if(stuffedBuffer[i+1] == 0X5E){
+                destuffedBuffer[*size] == FRAME_FLAG;
+                *size++;  
+            }
+        }
+    }
+
+    return destuffedBuffer;
+}
+
+//Verifies if the BCC2 on the information packet maintened the same.
+//Otherwise it is an indicator that an error occurred
+int verifyBCC2(char* buf){
+    int pos = 5;
+    int BCC2pos = (sizeof(buf)/sizeof(char))-1;
+    char aux = buf[pos-1]; 
+
+    for(pos; pos<BCC2pos; pos++){
+        aux ^= buf[pos];  
+    }
+
+    if(aux != buf[BCC2pos]){
+        perror("Invalid BCC2\n"); 
+        return TRUE;   
+    }
+
+    return -1;
+}
 
 /////////////// LLOPEN STUFF ///////////////
 
@@ -125,7 +171,7 @@ void alarmHandler(int signal)
     checkForAlarmCount(); //This function is necessary to "bypass" the buggy go to behaviour of the alarmHandler function
 }
 
-// --- STATE MACHINE FUNCTION --- //
+// --- STATE MACHINE FUNCTION FOR LLOPEN --- //
 void stateMachine(char* newFrame, int fd, char frame_C, int isReceiver){
 
     /*State Machine Aux Variables*/
@@ -173,7 +219,7 @@ void stateMachine(char* newFrame, int fd, char frame_C, int isReceiver){
                     currState = 3;
                 }
                 break;
-            case STATE3: //read 1 char & save char
+            case STATE3: //Verify BCC1
                 if(newFrame[3] == (newFrame[1]^newFrame[2])){
                     //It's a valid frame !!!
                     currState = 4; 
@@ -214,7 +260,7 @@ void stateMachine(char* newFrame, int fd, char frame_C, int isReceiver){
 } 
 
 ////////////////////////////////////////////////
-// LLOPEN
+// LLOPEN -> DONE
 ////////////////////////////////////////////////
 int llopen(linkLayer connectionParameters)
 {   
@@ -301,6 +347,13 @@ int llwrite(const unsigned char *buf, int bufSize)
 {
     if(bufSize < 0) return -1; 
 
+    //Control Packets
+    if(buf[0] == CTRL_START) //Send Start Packet
+        write(conParameters.fd, buf, bufSize); 
+    if(buf[0] == CTRL_END) //Sends End Packet
+        write(conParameters.fd, buf, bufSize); 
+
+    //Information Packets
     //Firstly Assembles Information Data and get the BCC2 without Stuffing
     char dataFrame[bufSize+1];
 	char BCC2 = 0x00;
@@ -323,31 +376,98 @@ int llwrite(const unsigned char *buf, int bufSize)
     sendTxFrame(); //Sends Information Frame
 
     //Activates Alarm for the first time
-    alarm(connectionParameters.timeout); 
+    alarm(conParameters.timeout); 
     alarmEnabled = TRUE;
 
-    /* STAND BY PQ PRIMEIRO TEM DE SE FAZER O READ*/
+    /* STATE MACHINE PARA PROCESSAR OS PACOTES RECEBIDOS*/
 
-    return 0;
+    /*State Machine Aux Variables*/
+    char newFrame[5]; 
+    newFrame[0] = FRAME_FLAG; 
+    newFrame[4] = FRAME_FLAG; 
+
+    STOP = FALSE; //Resets stop variable just in case
+    int currState = 0; //Integer value of the Start State 
+    int pos = 1; //pos = 1, because pos = 0 and pos = 4 are always equal to the frame flag so we won't fill them in our state machine
+    char aux_buf[1] = {0}; //Auxiliary buffer to help the processing of the byte read
+
+    //Read a frame from the serial port -> Cycle Stops if a valid frame has been read (STOP = TRUE) or when the max number of attemps have been reached
+    while (STOP == FALSE){    
+        switch (currState){
+            case STATE0: //read 1 char
+                read(conParameters.fd, aux_buf, 1);
+                //Updates the current state 
+                if(*aux_buf == FRAME_FLAG){
+                    currState = 1; 
+                }
+                //Continues on the same state
+                else{
+                    currState = 0; 
+                }
+                break;
+            case STATE1: //read 1 char
+                read(conParameters.fd, aux_buf, 1);
+                //Updates the current state 
+                if(*aux_buf != FRAME_FLAG){
+                    currState = 2; 
+                    //Saves char
+                    newFrame[pos] = (*aux_buf); 
+                    pos++; 
+                }
+                //Continues on the same state
+                else{
+                    currState = 1; 
+                }
+                break;
+            case STATE2: //read 1 char & save char
+                read(conParameters.fd, aux_buf, 1);
+                if(*aux_buf != FRAME_FLAG){
+                    currState = 2; 
+                    //Saves char
+                    newFrame[pos] = (*aux_buf); 
+                    pos++; 
+                }
+                else{
+                    currState = 3;
+                }
+                break;
+            case STATE3: //Verify BCC1
+                if(newFrame[3] == (newFrame[1]^newFrame[2])){
+                    //It's a valid frame !!!
+                    currState = 4; 
+                }
+                else{
+                    //It's not a valid frame !!!
+                    currState = 0; 
+                }
+                break; 
+            case STATE4: //evaluate C
+                if((newFrame[2] == C_RR0) && conParameters.sequenceNumber==1 || (newFrame[2] == C_RR1 && conParameters.sequenceNumber==0))
+                    return bufSize; //The Frame was correct and not duplicate
+                if((newFrame[2] == C_RR0) && conParameters.sequenceNumber!=1 || (newFrame[2] == C_RR1 && conParameters.sequenceNumber!=0))
+                    return 1; //Duplicate Frame
+                else if(newFrame[2] == C_REJ0 || newFrame[2] == C_REJ1)
+                    sendTxFrame();  //Resends the frame before the timout is triggered -> Error occurred in the BCC2
+                else
+                    //It is not a valid supervision Frame so we will reprocess everything again 
+                    currState = 0; 
+                break;
+            default:
+                printf("Something went wrong while processing the received Frame\n"); 
+                break;
+        }
+    }
+
+    return -1;
 }
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
+
+int llread(int fd,unsigned char *packet)
 {
-    //Verifies Frame Header
-    if(packet[1]^packet[2] == packet[3]) //Verify if BCC1 is valid
-
-    //Does the DeStuffing
-
-    //Verifies BCC2
-
-    //Verifies if frame is not duplicat
-
-    //If it is valid, then writes it to the file, by sending the data to the application layer
-
-    return 0;
+    return 0; 
 }
 
 ////////////////////////////////////////////////
