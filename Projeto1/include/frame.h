@@ -21,6 +21,8 @@
 
 //Byte Stuffing 
 #define ESC 0X7D
+#define ESC_ESC 0x5D
+#define FLAG_ESC 0X5E
 
 //Information Frame
 #define IFRAME0 0x00

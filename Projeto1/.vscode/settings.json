@@ -1,7 +1,7 @@
 {
     "files.associations": {
-        "application_layer.h": "c",
-        "link_layer.h": "c",
-        "frame.h": "c"
+        "termios.h": "c",
+        "frame.h": "c",
+        "link_layer.h": "c"
     }
 }

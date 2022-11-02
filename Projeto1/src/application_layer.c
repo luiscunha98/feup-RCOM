@@ -1,201 +1,223 @@
-// Application layer protocol implementation
-
-#include <stdio.h>
-#include <string.h>
+#include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <stdint.h>
-
-//Custom header files
-#include "application_layer.h"
+#include <termios.h>
+#include <math.h>
+#include <stdio.h>
+#include <time.h>
 #include "link_layer.h"
-#include "frame.h"
 
-static fileInformation fileInfo;
+/*Funcao testada e funcional*/
+int getDataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, int nBytes){
 
-void getFileSize(void){
-    int size = 0;
-    fseek(fileInfo.file, 0L, SEEK_END); //Sets the file position indicator to the end of the file
-    size = (int)ftell(fileInfo.file);
-    if(size == -1) perror("Something Went Wrong while getting file size;"); exit(-1); 
-    rewind(fileInfo.file); //Sets the file position indicator to the begining of the file
-    fileInfo.fileSize =  size; 
-}
+	int l2 = div(nBytes, 256).quot , l1 = div(nBytes, 256).rem;
 
-int assembleCtrlPacket(uint8_t CTRL_Field, char* packet){
-    unsigned L1 = sizeof(fileInfo.fileSize); //File Size in Bytes
-    unsigned L2 = strlen(fileInfo.fileName)*sizeof(char); //File Name in Bytes
-    unsigned size_packet = 5 + L1 + L2;
+    packet[0] = 0x01;
+	packet[1] = div(nSequence, 255).rem;
+    packet[2] = l2;
+    packet[3] = l1;
 
-    packet[size_packet];
-    packet[0] = CTRL_Field; //Control Field
-    packet[1] = 0x00; //File Size
-    packet[2] = L1; //File Size in Bytes
-    memcpy(&packet[3], &fileInfo.fileSize, L1); //Copies L1 Bytes from fileSize into packet[3]
-    packet[3+L1] = 0x01; //File Name
-    packet[4+L1] = L2; //File Name in Bytes
-    memcpy(&packet[5+L1], fileInfo.fileName, L2); //Copies L2 Bytes from fileSize into packet[5+L1]
-
-    return size_packet;
-}
-
-typedef enum{
-    SET, 
-} frameType; 
-
-void assembleFrame(char* frame, frameType frametype){
-    switch (frametype)
-    {
-    case SET:
-        frame[0] = FRAME_FLAG; 
-        frame[1] = FRAME_A; 
-        frame[2] = SETFRAME_C; 
-        frame[3] = SETFRAME_BCC; 
-        frame[4] = FRAME_FLAG;
-        break;
-    default:
-        perror("Invalid frame type"); 
-        break;
+    for(int i=0; i<nBytes; i++){
+        packet[i+4] = bytes[i];
     }
+
+	return (nBytes+4); //tamanho do data packet
+
 }
 
 
-void applicationLayer(const char *serialPort, const char *role, int baudRate,
-                      int nTries, int timeout, const char *filename)
+
+void applicationLayer(const char *serialPort, const char *role, int baudRate, int nTries, int timeout, const char *filename)
 {
-
-    FILE* file; 
-
-    if(strlen(serialPort) > 20){
-        perror("Invalid serial Port"); 
-        return; 
-    }
-
-    int fd = open(serialPort, O_RDWR | O_NOCTTY);
-    if (fd < 0)
-    {
-        perror(serialPort);
-        exit(-1);
-    }
-
-    LinkLayerRole llrole; 
+    LinkLayerRole tr;
     
-    if(strcmp(role, "tx") == 0) //Transmiter
-        llrole = LlTx; 
-    else if (strcmp(role, "rx") == 0) //Receiver
-        llrole = LlRx; 
-    else{
-        perror(role); 
-        return; 
+    int resTX = strcmp (role, "tx");
+    int resRX = strcmp (role, "rx");
+
+    int statistics = 1;
+
+    if(resTX==0){
+        tr = LlTx;
     }
+    else if(resRX==0){tr = LlRx;}
+    else {printf("\nERROR! Invalid role.\n"); return;}
 
-    appLayer applicationl;
-    applicationl.fileDescriptor = fd; 
-    applicationl.status = llrole; 
+    LinkLayer ll;
+    strcpy(ll.serialPort, serialPort);
+    ll.baudRate = baudRate;
+    ll.nRetransmissions = nTries;
+    ll.timeout = timeout;
+    ll.role = tr;
 
-    linkLayer llayer;
-    if((sizeof(llayer.port)/sizeof(char)) >= (sizeof(serialPort)/sizeof(char)))
-        strcpy(llayer.port, serialPort); 
-    else 
-        perror("Incorrect serialPort size"); 
-    llayer.baudRate = baudRate;
-    llayer.sequenceNumber = 0; 
-    llayer.timeout = timeout; 
-    llayer.numTransmissions = nTries; 
-    llayer.role = llrole; 
-    llayer.fd = applicationl.fileDescriptor;
+    if(llopen(ll)==-1) {return;}
+    
+    clock_t start, end;
+    
+    start = clock();
+    //segmento testado e funcional (a excecao de llwrite)
+    if(tr == LlTx){
+        unsigned char packet[300], bytes[200], fileNotOver = 1;
+        int sizePacket = 0;
+       
 
-    frameType frametype; 
-
-    if(llrole == LlTx){ 
-        //llopen() part -> OPENING THE CONNECTION PART
-        frametype = SET; 
-        assembleFrame(llayer.frame, frametype); 
-        if(llopen(llayer) == 1) perror("LLOPEN: Something Went Wrong while trying to establish the connection"); 
-
-        //llwrite() part -> SENDING THE FILE TO THE RECIEVER PART
-
-        //Gets all file info
-        file = fopen(filename, "r"); //Opens the file in read mode, once we want to pass it's content to the receiver
-        if(file == NULL){
-            perror("Invalid file! \n"); 
-            //llclose()
-            exit(-1); 
-        }
-
-        fileInfo.file = file; //Gets the file pointer
-        fileInfo.fileName = filename; //Gets the file name
-        getFileSize(); //Gets the file size
-
-        //Builds the START PACKET based on file info
-        char* startPacket; 
-        int startPacketsize = assembleCtrlPacket(CTRL_START, startPacket); 
-
-        //Sends the START Packet
-        if(llwrite(startPacket, startPacketsize) < 0){
-            perror("Something Went Wrong while trying to send the START Packet"); 
-            //Calls llclose()
-        }
-
-        printf("Tou aqui 1\n"); 
-
-        //Assembles Data Packet
-        int filebytesread = 0; 
-        int filereadsz = 0; 
-
-        //Reads the contents of the file
-        while(1){
-            if(ferror(fileInfo.file)){
-                perror("Something Went Wrong while trying to read file's content");
-                exit(-1); 
-            }
-
-            printf("File Bytes Read: %d \n", filebytesread); 
-
-            if((filebytesread == fileInfo.fileSize) || feof(fileInfo.file))
-                break;
-            
-            //Data Field Assemble (P1..Pn)
-            filereadsz = fread(llayer.frame+4, sizeof(char), MAX_PAYLOAD_SIZE-4, fileInfo.file); 
-            //Data Packet C(0),N(1),L2(2),L1(3) assemble
-            llayer.frame[0] = 0x01; //Data
-            llayer.frame[1] = llayer.sequenceNumber%256;
-            llayer.sequenceNumber++; 
-            // Bytes number K = 256*L2+ L1 
-            // K = filebytesread
-            llayer.frame[2] = filebytesread/256; 
-            llayer.frame[3] = filebytesread - (llayer.frame[2] * 256); 
-
-            //Calls llwrite to send the current Data Packet 
-            if(llwrite(llayer.frame, filebytesread+4) < 0){
-                perror("Something Went Wrong while trying to send the Data Packet"); 
-                //Calls llclose()
-            }
-
-            //llwrite returned without any errors
-            filebytesread += filereadsz; //Update bytes read
-            memset(llayer.frame, 0, MAX_PAYLOAD_SIZE); //"Resets frame" by setting all its to 0
-        }
-
-        //Builds END packet
-        char* endPacket;
-        int endPacketSize = assembleCtrlPacket(CTRL_END, endPacket);
-
-        //Sends the END Packet
-        if(llwrite(endPacket, endPacketSize) < 0){
-            perror("Something Went Wrong while trying to send the END Packet");
-        }
-
-        //llclose() to finish the tranmission
-    } 
-    else if(llrole == LlRx){                                                
-        //llopen() part -> OPENING THE CONNECTION PART
-        if(llopen(llayer) == 1) perror("LLOPEN: Something Went Wrong while trying to establish the connection");  
+        FILE *fileptr;
         
+
+        int nBytes = 200, curByte=0, index=0, nSequence = 0;
+        
+        
+        fileptr = fopen(filename, "rb");        // Open the file in binary mode
+        if(fileptr == NULL){
+            printf("Couldn't find a file with that name, sorry :(\n");
+            return;
+        }
+        
+
+
+        sizePacket = getControlPacket(filename,1,&packet);
+
+        if(llwrite(packet, sizePacket) == -1){
+            return;
+        }
+
+
+        while(fileNotOver){
+
+            //comeco por ler a file stream
+            //se deixar de haver coisas para ler corro este codigo
+            if(!fread(&curByte, (size_t)1, (size_t) 1, fileptr)){
+                fileNotOver = 0;
+                sizePacket = getDataPacket(bytes, &packet, nSequence++, index);
+
+                if(llwrite(packet, sizePacket) == -1){
+                    return;
+                }
+            }
+
+            //se o valor de index for igual a nBytes, significa que o ja passamos por nByte elementos
+            else if(nBytes == index) {
+                sizePacket = getDataPacket(bytes, &packet, nSequence++, index);
+
+                if(llwrite(packet, sizePacket) == -1){
+                    return;
+                }
+
+                memset(bytes,0,sizeof(bytes));
+                memset(packet,0,sizeof(packet));
+                index = 0;
+            }
+
+            bytes[index++] = curByte;
+        }
+
+        fclose(fileptr);
+
+        sizePacket = getControlPacket(filename,0,&packet);
+
+        if(llwrite(packet, sizePacket) == -1){
+            return;
+        }
+
     }
-    else
-        perror("Invalid Role"); 
+
+    else{
+        // 1º chamar llread
+        // 2º ler o packet do llread, se for um control packet START, criar um ficheiro novo, quando receber o close fecho o ficheiro que estou a escrever e paro de chamar llread, se for 0, prox iteraçao chamr llread de novo
+        // 3º escrever os dataPacket no ficheiro que criei
+        FILE *fileptr;
+        char readBytes = 1;
+        
+        
+
+        while(readBytes){
+        
+            unsigned char packet[600] = {0};
+            int sizeOfPacket = 0, index = 0;
+            
+            if(llread(&packet, &sizeOfPacket)==-1){
+                continue;
+            }
+           
+            
+            if(packet[0] == 0x03){
+                printf("\nClosed penguin\n");
+                fclose(fileptr);
+                readBytes = 0;
+            }
+            else if(packet[0]==0x02){
+                printf("\nOpened penguin\n");
+                fileptr = fopen(filename, "wb");   
+            }
+            else{
+                for(int i=4; i<sizeOfPacket; i++){
+                    fputc(packet[i], fileptr);
+                }
+            }
+        }
+    }
+    end = clock();
+    float duration = ((float)end - start)/CLOCKS_PER_SEC;
+
+    llclose(&statistics, ll, duration);
+    
+    
+    return;
 
 }
+
+/*Funcao testada e funcional*/
+int getControlPacket(char* filename, int start, unsigned char* packet){
+
+    int sizeOfPacket = 0;
+
+	if(strlen(filename) > 255){
+        printf("size of filename couldn't fit in one byte: %d\n",2);
+        return -1;
+    }
+
+	unsigned char hex_string[20];
+
+    struct stat file;
+    stat(filename, &file);
+    sprintf(hex_string, "%02lX", file.st_size);
+	
+	int index = 3, fileSizeBytes = strlen(hex_string) / 2, fileSize = file.st_size;
+
+    printf("\nfilesize: %d\n hex_string: %s", file.st_size, hex_string);
+
+    if(fileSizeBytes > 256){
+        printf("size of file couldn't fit in one byte\n");
+        return -1;
+    }
+    
+    if(start){
+		packet[0] = 0x02; 
+    }
+    else{
+        packet[0] = 0x03;
+    }
+
+    packet[1] = 0x00; // 0 = tamanho do ficheiro 
+    packet[2] = fileSizeBytes;
+
+
+	for(int i=(fileSizeBytes-1); i>-1; i--){
+		packet[index++] = fileSize >> (8*i);
+	}
+    
+
+    packet[index++] = 0x01;
+    packet[index++] = strlen(filename);
+
+	for(int i=0; i<strlen(filename); i++){
+		packet[index++] = filename[i];
+	}
+
+	sizeOfPacket = index;
+    
+    return sizeOfPacket;
+
+}
+
