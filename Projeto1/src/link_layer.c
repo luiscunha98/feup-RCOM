@@ -23,9 +23,10 @@ int alarmCount=0;
 int txSequenceNumber = 0;  //Numero de sequencia transmissor
 int rxSequenceNumber = 1; //Numero de sequencia recetor
 
-
+//Auxiliary Variables
 int nTries, timeout, fd, lastFrameNumber = -1;
 
+/// ---------- ALARM FUNCTIONS ---------- ///
 // Alarm function handler
 void alarmHandler(int signal)
 {
@@ -98,135 +99,136 @@ int llopen(LinkLayer connectionParameters)
 
     printf("New termios structure set\n");
     
-
-    printf("LLOPEN: Beggining Connection Estabilishment");
-
     nTries = connectionParameters.nRetransmissions;
     timeout = connectionParameters.timeout;
 
-
     if(connectionParameters.role == LlTx){
 
-        unsigned char buf[5] = {0}, parcels[5] = {0};
+        unsigned char setFrame[5] = {0}; 
+        unsigned char uaFrame[5] = {0};
 
-        buf[0] = FRAME_FLAG;
-        buf[1] = FRAME_A;
-        buf[2] = SETFRAME_C;
-        buf[3] = SETFRAME_BCC;
-        buf[4] = FRAME_FLAG;
+        //Assembles SET Frame
+        setFrame[0] = FRAME_FLAG;
+        setFrame[1] = FRAME_A;
+        setFrame[2] = SETFRAME_C;
+        setFrame[3] = SETFRAME_BCC;
+        setFrame[4] = FRAME_FLAG;
 
 
         while(alarmCount < nTries){
 
-            if(!alarmEnabled){
-                int bytes = write(fd, buf, sizeof(buf));
-                printf("\nSET message sent, %d bytes written\n", bytes);
+            if(alarmEnabled == FALSE){
+                int bytes = write(fd, setFrame, 5);//Sends Set Frame
+                sleep(1);  // Wait until all bytes have been written to the serial port
+                printf("%d bytes written\n", bytes);
                 startAlarm(timeout);
             }
             
-            int bytesread = read(fd, parcels, 5);
-            if(bytesread != -1 && parcels != 0 && parcels[0]==0x7E){
-                //se o UA estiver errado 
-                if(parcels[2] != 0x07 || (parcels[3] != (parcels[1]^parcels[2]))){
-                    printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                    alarmEnabled = FALSE;
-                    continue;
+            //Reads 5 bytes from the pipe
+            if(read(fd, uaFrame, 5) == -1)
+                continue; 
+
+            if(uaFrame[0]==FRAME_FLAG){
+                if((uaFrame[3] == uaFrame[1]^uaFrame[2]) &&  uaFrame[2] == UAFRAME_C){ //If uaFrame BCC1 is valid and Control Byte is correct we received a valid UA Frame
+                    printf("UA Frame Received with success: %x %x %x %x %x \n", uaFrame[0], uaFrame[1], uaFrame[2], uaFrame[3], uaFrame[4]); 
+                    printf("LLOPEN: Connection Established Successfully !! \n"); 
+                    alarmEnabled = FALSE; 
+                    return 1; 
                 }
-                
-                else{   
-                    printf("\nUA correctly received: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                    alarmEnabled = FALSE;
-                    break;
+                else{
+                    alarmEnabled = FALSE; 
+                    printf("UA Frame is Incorrect: %x %x %x %x %x \n", uaFrame[0], uaFrame[1], uaFrame[2], uaFrame[3], uaFrame[4]); 
+                    break; 
                 }
             }
 
         }
 
         if(alarmCount >= nTries){
-            printf("\nAlarm limit reached, SET message not sent\n");
+            printf("LLOPEN: MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }
     }
-
     else
     {
-        unsigned char buf[1] = {0}, parcels[5] = {0}; // +1: Save space for the final '\0' char
-
-        STATE st = STATE0;
+        //State Machine Auxiliary Variables
+        unsigned char aux_buf[1] = {0}; 
+        unsigned char newFrame[5] = {0};
+        int currState = STATE0;
         unsigned char readByte = TRUE;
         
-        // Loop for input
+        //Reads pipe's content
         while (STOP == FALSE)
         { 
             if(readByte){
-                int bytes = read(fd, buf, 1); //ler byte a byte
-                if(bytes==0 || bytes == -1) continue;
+                if(read(fd, aux_buf, 1) <= 0)
+                    continue;
             }
         
-            
-            switch (st)
+            switch (currState)
             {
             case STATE0:
-                if(buf[0] == 0x7E){
-                    st = STATE1;
-                    parcels[0] = buf[0];
+                memset(newFrame, 0, 5);
+                readByte = TRUE;
+                if(aux_buf[0] == FRAME_FLAG){
+                    currState = STATE1;
+                    newFrame[0] = aux_buf[0];
                 }
                 break;
 
             case STATE1:
-                if(buf[0] != 0x7E){
-                    st = STATE2;
-                    parcels[1] = buf[0];
+                if(aux_buf[0] != FRAME_FLAG){
+                    currState = STATE2;
+                    newFrame[1] = aux_buf[0];
                 }
                 else {
-                    st = STATE0;
-                    memset(parcels, 0, 5);
+                    currState = STATE0;
                 }
                 break;
 
             case STATE2:
-                if(buf[0] != 0x7E){
-                    st = STATE3;
-                    parcels[2] = buf[0];
+                if(aux_buf[0] != FRAME_FLAG){
+                    currState = STATE3;
+                    newFrame[2] = aux_buf[0];
                 }
                 else {
-                    st = STATE0;
-                    memset(parcels, 0, 5);
+                    currState = STATE0;
                 }
                 break;
 
             case STATE3:
-                if(buf[0] != 0x7E){
-                    parcels[3] = buf[0];
-                    st = STATE4;
+                if(aux_buf[0] != FRAME_FLAG){
+                    newFrame[3] = aux_buf[0];
+                    currState = STATE4;
                 }
                 else {
-                    st = STATE0;
-                    memset(parcels, 0, 5);
+                    currState = STATE0;
                 }
                 break;
 
             case STATE4:
-                if(buf[0] == 0x7E){
-                    parcels[4] = buf[0];
-                    st = STATE5;
+                if(aux_buf[0] == FRAME_FLAG){
+                    newFrame[4] = aux_buf[0];
+                    currState = STATE5;
                     readByte = FALSE;
                 }
 
                 else {
-                    st = STATE0;
-                    memset(parcels, 0, 5);
+                    currState = STATE0;
                 }
                 break;
             case STATE5:
-                if(((parcels[1])^(parcels[2]))==(parcels[3])){
-                    printf("\nGreat success! SET message received without errors\n\n");
-                    STOP = TRUE;
+                //It is a Valid Frame!
+                if(((newFrame[1])^(newFrame[2]))==(newFrame[3])){
+                    //It is a valid SET Frame!
+                    if(newFrame[2] == SETFRAME_C)
+                        STOP = TRUE; 
+                    else{
+                        currState = STATE0;
+                    }
                 }
                 else {
-                    st = STATE0;
-                    memset(parcels, 0, 5);
-                    readByte = TRUE;
+                    currState = STATE0;
                 }
                 break;
             default:
@@ -234,18 +236,24 @@ int llopen(LinkLayer connectionParameters)
             }
         }
 
-        parcels[2] = 0x07;
-        parcels[3] = parcels[1]^parcels[2];
+        printf("LLOPEN (Rx): SET Frame Received Successfully: %x %x %x %x %x \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]);
+        printf("LLOPEN (Rx): Sending UA Frame as Reply! \n");
 
-        //preciso de estar dentro da state machine ate receber um sinal a dizer que o UA foi corretamente recebido
+        //If SET Frame was correctly received we are going to reply with a UA Frame
+        unsigned char uaFrame[5] = {0}; 
+        uaFrame[0] = FRAME_FLAG; 
+        uaFrame[1] = FRAME_A; 
+        uaFrame[2] = UAFRAME_C; 
+        uaFrame[3] = UAFRAME_BCC; 
+        uaFrame[4] = FRAME_FLAG; 
 
-        int bytes = write(fd, parcels, sizeof(parcels));
-        printf("UA message sent, %d bytes written\n", bytes);
+        int bytes = write(fd, uaFrame, 5); //Sends UA Frame back
+        sleep(1);  // Wait until all bytes have been written to the serial port
+        printf("%d bytes written\n", bytes);
+        return 1; 
     }
 
-    alarmEnabled = FALSE;
-
-    return 1;
+    return -1;
 }
 
 ////////////////////////////////////////////////
@@ -271,7 +279,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     int posInfo = 4; 
 
-    //Stores the data inside data packet into the information frame
+    //Stores the data inside data packet into the information frame and stuffs it at the same time
     for(int i=0; i<bufSize; i++){
         if(buf[i]==FRAME_FLAG){
             info[posInfo++]=ESC;
@@ -302,7 +310,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         break;
     }
 
-    //Builds Info frame header & assigns the correct ctr field value to the aux variable
+    //Builds Info frame header & assigns the correct control field value to the aux variable
     info[0]=FRAME_FLAG; 
     info[1]=FRAME_A;
     switch (txSequenceNumber)
@@ -325,31 +333,30 @@ int llwrite(const unsigned char *buf, int bufSize)
     info[posInfo++]=FRAME_FLAG; //Finalizes info packet build by adding the Flag at the end
 
     while(STOP == FALSE){
-        //Sends Frame
+
         if(alarmEnabled == FALSE){
             write(fd, info, posInfo); //Sends Information Frame
             startAlarm(timeout);
             printf("\nInformation Frame N(s=%d)\n", txSequenceNumber);
         }
         
-        int bytesread = read(fd, respFrame, 5);
+        if(read(fd, respFrame, 5) == -1)
+            continue; 
 
         //Receives response frame from the receiver
         //If it is a REJ we simply resend the frame
         //If RR BCC1 is correct and Control Field value corresponds to the Tx frame sequence number the RR frame is correct
         //Otherwise we just wait for the timeout 
-        if(bytesread != -1 && respFrame != 0){
 
-            //Verifies if response has a valid BCC1 and Response Control Field is correct according to current Tx frame sequence number
-            if((respFrame[2] == controlFieldResp) && (respFrame[3] = respFrame[1]^respFrame[2])){
-                printf("ACK is Correct: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
-                STOP = TRUE;
-                alarmEnabled = FALSE;
-            }
-            else{
-                printf("ACK is Wrong: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
-                alarmEnabled = FALSE;
-            }
+        //Verifies if response has a valid BCC1 and Response Control Field is correct according to current Tx frame sequence number
+        if((respFrame[2] == controlFieldResp) && (respFrame[3] = respFrame[1]^respFrame[2])){
+            printf("ACK is Correct: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
+            STOP = TRUE;
+            alarmEnabled = FALSE;
+        }
+        else{
+            printf("ACK is Wrong: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
+            alarmEnabled = FALSE;
         }
 
         //Did not receive the expected ACK frame (RR0/RR1)
