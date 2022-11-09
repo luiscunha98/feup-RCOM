@@ -29,8 +29,8 @@
 #define IFRAME1 0x40
 
 //Receiver Ready(RR) Frame
-#define C_RR0 0x03
-#define C_RR1 0x83
+#define C_RR0 0x05
+#define C_RR1 0x85
 
 //Reject(REJ) Frame
 #define C_REJ0 0x01

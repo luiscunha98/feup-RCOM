@@ -21,7 +21,7 @@ volatile int STOP = FALSE;
 int alarmEnabled=0; 
 int alarmCount=0;
 int txSequenceNumber = 0;  //Numero de sequencia transmissor
-int receiverNumber = 1; //Numero de sequencia recetor
+int rxSequenceNumber = 1; //Numero de sequencia recetor
 
 
 int nTries, timeout, fd, lastFrameNumber = -1;
@@ -253,20 +253,13 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-
-    //1º criar o BCC para o dataPacket
-    //2º fazer byte stuffing
-    //3º criar a nova infoFrame com o dataPacket (ja stuffed) la dentro
-    //4º enviar a infoFrame e contar o alarme
-    //5º factCheck a frame recebida do llread (ver se tem erros ou assim)
-    //6º llwrite so termina quando recebe mensagem de sucesso ou quando o limite de tentativas é excedido
-
-    printf("\n------------------------------LLWRITE------------------------------\n\n");
+    printf("\n ------ ATEMPTING INFORMATION FRAME TRANSMITION ------ \n\n");
 
     alarmCount = 0;
 
-    unsigned char parcels[5] = {0}; 
-    int STOP = 0, controlReceiver = (!txSequenceNumber << 7) | 0x05;
+    unsigned char respFrame[5] = {0}; 
+    int STOP = FALSE;
+    int controlFieldResp=0x00; 
 
     char info[MAX_PAYLOAD_SIZE] = {0}; 
 
@@ -290,8 +283,8 @@ int llwrite(const unsigned char *buf, int bufSize)
             info[posInfo++]=ESC_ESC;
             continue;
         }
-
-        info[posInfo++]=buf[i];
+        else
+            info[posInfo++]=buf[i];
     }
 
     //Does byte stuffing on BCC2
@@ -309,19 +302,21 @@ int llwrite(const unsigned char *buf, int bufSize)
         break;
     }
 
-    //Builds Info frame header
+    //Builds Info frame header & assigns the correct ctr field value to the aux variable
     info[0]=FRAME_FLAG; 
     info[1]=FRAME_A;
     switch (txSequenceNumber)
     {
     case 0:
         info[2] = IFRAME0; 
+        controlFieldResp = C_RR1; //Because (N(r=1), so N(s=0))
         break;
     case 1: 
         info[2] = IFRAME1; 
+        controlFieldResp = C_RR0; //Because (N(r=0), so N(s=1))
         break; 
     default:
-        perror("Transmitter sequence number error\n"); 
+        perror("LLWRITE ERROR: Invalid transmiter sequence number\n"); 
         break;
     }
     info[3]=info[1]^info[2]; 
@@ -329,46 +324,49 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     info[posInfo++]=FRAME_FLAG; //Finalizes info packet build by adding the Flag at the end
 
-
-    while(!STOP){
-        if(!alarmEnabled){
-            write(fd, info, posInfo);
-            printf("\nInfoFrame sent NS=%d\n", txSequenceNumber);
+    while(STOP == FALSE){
+        //Sends Frame
+        if(alarmEnabled == FALSE){
+            write(fd, info, posInfo); //Sends Information Frame
             startAlarm(timeout);
+            printf("\nInformation Frame N(s=%d)\n", txSequenceNumber);
         }
         
-        
-        int bytesread = read(fd, parcels, 5);
+        int bytesread = read(fd, respFrame, 5);
 
-        if(bytesread != -1 && parcels != 0){
-            /*alarmEnabled = FALSE;
-            return 1;*/
+        //Receives response frame from the receiver
+        //If it is a REJ we simply resend the frame
+        //If RR BCC1 is correct and Control Field value corresponds to the Tx frame sequence number the RR frame is correct
+        //Otherwise we just wait for the timeout 
+        if(bytesread != -1 && respFrame != 0){
 
-            if(parcels[2] != (controlReceiver) || (parcels[3] != (parcels[1]^parcels[2]))){
-                    printf("\nRR not correct: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                    alarmEnabled = FALSE;
-                    continue;
-            }
-            
-            else{
-                printf("\nRR correctly received: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
+            //Verifies if response has a valid BCC1 and Response Control Field is correct according to current Tx frame sequence number
+            if((respFrame[2] == controlFieldResp) && (respFrame[3] = respFrame[1]^respFrame[2])){
+                printf("ACK is Correct: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
+                STOP = TRUE;
                 alarmEnabled = FALSE;
-                STOP = 1;
+            }
+            else{
+                printf("ACK is Wrong: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
+                alarmEnabled = FALSE;
             }
         }
 
+        //Did not receive the expected ACK frame (RR0/RR1)
         if(alarmCount >= nTries){
-            printf("\nllwrite error: Exceeded number of tries when sending frame\n");
-            STOP = 1;
+            perror("\nLLWRITE: Number of attempts exceeded\n");
+            STOP = TRUE;
+            printf("\n ------ INFORMATION FRAME TRANSMITION FAILED ------ \n\n");
             close(fd);
             return -1;
         }
 
     }
 
+    printf("\n ------ INFORMATION FRAME TRANSMITION SUCCESSFULLY ------ \n\n");
 
-    if(txSequenceNumber) txSequenceNumber = 0;
-    else txSequenceNumber = 1;
+    //Updates sequence number
+    txSequenceNumber ? txSequenceNumber = 0 : txSequenceNumber++; 
 
     return 0;
 }
@@ -380,118 +378,140 @@ int llread(unsigned char *packet, int *sizeOfPacket)
 {       
     printf("\n------------------------------LLREAD------------------------------\n\n");
 
-    unsigned char infoFrame[600]={0}, supFrame[5]={0}, BCC2=0x00, aux[400] = {0}, flagCount = 0, STOP = FALSE; 
-    int control = (!receiverNumber) << 6, index = 0, sizeInfo = 0;
+    unsigned char receivedFrame[MAX_PAYLOAD_SIZE]={0}; 
+    unsigned char supervisionFrame[5]={0}; 
+    // ----- AINDA NAO VI ESTA MERDA DESTAS VARIAVEIS ----- //
+    unsigned char BCC2=0x00, aux[MAX_PAYLOAD_SIZE] = {0}; 
+    int sizeInfo = 0; //Nao entendo esta linha
 
-    
-    unsigned char buf[1] = {0}; // +1: Save space for the final '\0' char
+    //Assigns the expected Information Control Byte in order to avoid duplicates
+    unsigned char ctrlByte = 0x00; 
+    switch (rxSequenceNumber)
+    {
+    case 0:
+        ctrlByte = 0x40; //N(r=0), so its expected to receive info frame 1
+        break;
+    case 1: 
+        ctrlByte = 0x00; //N(r=1), so its expected to receive info frame 0
+        break; 
+    default:
+        perror("LLREAD ERROR: Invalid Receiver Sequence Number\n"); 
+        return -1; 
+    }
 
-    STATE st = STATE0;
-    unsigned char readByte = TRUE;
+    //State Machine Auxiliary Variables
+    int STOP = FALSE;
+    char aux_buf[1] = {0}; //Auxiliary buffer to read the contents of the pipe
+    int currState = 0; 
+
+    //Reads all the info on the pipe
+    while (STOP == FALSE){ 
+
+        //Reads the content sent by the transmitter byte by byte
+        if(read(fd, aux_buf, 1) <= 0) //If an error occurred while reading or didn't read any bytes
+            continue; 
     
-    
-    // Loop for input
-    while (!STOP)
-    { 
-        if(readByte){
-            int bytes = read(fd, buf, 1); //ler byte a byte
-            if(bytes==-1 || bytes == 0) continue; // se der erro a leitura ou se tiver lido 0 bytes continuo para a próxima iteraçao
-            
-        }
-    
-        
-        switch (st)
+        switch (currState)
         {
         case STATE0:
-            //state0 porque a primeira coisa que quero receber é a FLAG. quando tenho confirmaçao que recebi a flag passo ao proximo estado.
-            if(buf[0] == 0x7E){
-                st = STATE1;
-                infoFrame[sizeInfo++] = buf[0];
+            //Found a flag byte, so adds it to the received buffer
+            if(aux_buf[0] == 0x7E){
+                currState = STATE1; //Goes into stage1 where it detects if it is not a random byte or it is actually a frame
+                receivedFrame[sizeInfo++] = aux_buf[0];
             }
-            //se nao receber a flag significa que estou a ler um byte aleatorio que eu nao quero
+            else
+                currState = STATE0; //Non relevant byte, so we will keep waiting for the desired flag byte
             break;
 
         case STATE1:
-            //no STATE1 eu quero receber qualquer coisa exceto a flag, porque pode dar-se o caso que eu leio 2 FLAGS seguidas (a de fim de uma trama e a de inicio de outra)
-            // ou seja, EU NAO QUERO EM QUALQUER CASO LER 0X7E DUAS VEZES SEGUIDINHAS porque isso significa que esta a ler duas tramas diferentes
-            //por isso este estado serve só para receber um byte logo a seguir a flag, que seja diferente de 0x7E, assim que isso acontecer passo para STATE2
-            if(buf[0] != 0x7E){
-            
-                st = STATE2;
-                infoFrame[sizeInfo++] = buf[0];
+            //We are reading a frame
+            if(aux_buf[0] != FRAME_FLAG){
+                currState = STATE2; //Advances to read frame content state
+                receivedFrame[sizeInfo++] = aux_buf[0];
             }
-            //Se eu ler duas FLAGS seguidas sei que a flag que acabei de ler é o inico de uma nova tram de info por isso posso cortar o primeiro passo de receber a flag e continuar no STATE1 em que a proxima coisa que vem depois de uma flag é qualquer numero EXCETO a flag
+            // The byte read before was not part of a frame, so we go back to our starting point
             else{
-                memset(infoFrame, 0, 600);
-                st = STATE1;
-                sizeInfo = 0;
-                infoFrame[sizeInfo++] = buf[0];
+                memset(receivedFrame, 0, MAX_PAYLOAD_SIZE); //Resets received buffer
+                currState = STATE0; //Goes back to initial state
             }
             break;
 
         case STATE2:
-            //no state2 eu ja garanti que estou a ler uma unica trama de informaçao e nao o cu e a cabeça de duas diferentes, por isso continuo no STATE2 até recebr uma flag (ou seja ate acabar a trama de info)
-            if(buf[0] != 0x7E){
-                infoFrame[sizeInfo++] = buf[0];
-            }
-            //quando receber a flag significa que a trama de info acabou e por isso posso sair da stateMachine e comecou a verificar se aquilo que recebi nao foi corrompido ou algo do genero
-            else if(buf[0] == 0x7E){
-            
+            //Found end flag -> Frame read succesfully -> Exits State Machine
+            if(aux_buf[0] == FRAME_FLAG){
                 STOP = TRUE;
-                infoFrame[sizeInfo++] = buf[0];
-                readByte = FALSE;
+                receivedFrame[sizeInfo++] = aux_buf[0];
+            }
+            //We are still reading the frame content
+            else{
+                receivedFrame[sizeInfo++] = aux_buf[0];
             }
             break;
-        
         default:
+            perror("LLREAD: Something unexpected happened while reading from pipe\n Aborting Operation\n"); 
+            return -1; 
             break;
         }
     }
+    
+    //Builds Supervision Frame Main structure
+    supervisionFrame[0] = FRAME_FLAG;
+    supervisionFrame[1] = FRAME_A;
+    supervisionFrame[4] = FRAME_FLAG;
 
-    //1º ler o pipe
-    //2º fazer de-stuff aos bytes lidos
+    //If Information Frame is Duplicate or Information Frame Header is Wrong we send a REJ frame as response
+    if(receivedFrame[3] != (receivedFrame[1]^receivedFrame[2]) || receivedFrame[2] != ctrlByte){ 
+        //Based on RX sequence number we assign the correct Control Field value corresponding to REJ0/REJ1
+        switch (rxSequenceNumber)
+        {
+        case 0:
+            supervisionFrame[2] = C_REJ0; 
+            break;
+        case 1: 
+            supervisionFrame[2] = C_REJ1; 
+            break; 
+        default:
+            perror("LLREAD ERROR: Invalid transmiter sequence number\n"); 
+            break;
+        }
+        supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2]; //Calculates Supervision Frame BCC1
+        write(fd, supervisionFrame, 5); //Sends Reject Frame as Response
+
+        printf(" ----- SENT REJ FRAME CONTENT ----- \n");
+
+        //Prints REJ frame content
+        for(int i=0; i<5; i++){
+            printf("%x ", supervisionFrame[i]);
+        }
+        printf("\n"); 
+
+        return -1; 
+    }
+
+    int pos = 0; 
+
+    //DeStuffing of the Received Frame content
+    for(int i=0; i<sizeInfo; i++){
+        if(receivedFrame[i] == ESC){ //Escape Byte Detected
+            if(receivedFrame[i+1]==FLAG_ESC){ //Asserts if the the frame flag has been stuffed
+                packet[pos++] = FRAME_FLAG;
+                i++;
+            }
+            if(receivedFrame[i+1]==ESC_ESC){ //Asserts if the escape byte has been stuffed
+                packet[pos++] = ESC;
+                i++;
+            }
+        }
+        else 
+            packet[pos++] = receivedFrame[i];
+    }
+
+    ///VER MELHOR A PARTIR DAQUI -> NAO PRESTEI A DEVIDA ATENÇÃO AINDA
+
     //3º verificar que os BCCs estao certos
     //4º enviar a mensagem de confirmacao de receçao, positiva se correu tudo bem, negativa se BCC ou assim esta mal
     
     //fazer as contas para confirmar o valor max do buffer
-    
-    supFrame[0] = 0x7E;
-    supFrame[1] = 0x03;
-    
-    supFrame[4] = 0x7E;
-
-    if((infoFrame[1]^infoFrame[2]) != infoFrame[3] || infoFrame[2] != control){
-        printf("\nInfoFrame not received correctly. Protocol error. Sending REJ.\n");
-        supFrame[2] = (receiverNumber << 7) | 0x01;
-        supFrame[3] = supFrame[1] ^ supFrame[2];
-        write(fd, supFrame, 5);
-
-        printf("\n-----REJ-----\n");
-        printf("\nSize of REJ: %d\nREJ: 0x", 5);
-
-        for(int i=0; i<5; i++){
-            printf("%02X ", supFrame[i]);
-        }
-
-        printf("\n\n");
-
-        return -1;
-    }
-
-
-    for(int i=0; i<sizeInfo; i++){
-        if(infoFrame[i] == 0x7D && infoFrame[i+1]==0x5e){
-            packet[index++] = 0x7E;
-            i++;
-        }
-
-        else if(infoFrame[i] == 0x7D && infoFrame[i+1]==0x5d){
-            packet[index++] = 0x7D;
-            i++;
-        }
-
-        else {packet[index++] = infoFrame[i];}
-    }
 
     int size = 0; //tamanho da secçao de dados
 
@@ -515,38 +535,38 @@ int llread(unsigned char *packet, int *sizeOfPacket)
     if(packet[size-2] == BCC2){
 
         if(packet[4]==0x01){
-            if(infoFrame[5] == lastFrameNumber){
+            if(receivedFrame[5] == lastFrameNumber){
                 printf("\nInfoFrame received correctly. Repeated Frame. Sending RR.\n");
-                supFrame[2] = (receiverNumber << 7) | 0x05;
-                supFrame[3] = supFrame[1] ^ supFrame[2];
-                write(fd, supFrame, 5);
+                supervisionFrame[2] = (rxSequenceNumber << 7) | 0x05;
+                supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
+                write(fd, supervisionFrame, 5);
                 return -1;
             }   
             else{
-                lastFrameNumber = infoFrame[5];
+                lastFrameNumber = receivedFrame[5];
             }
         }
         printf("\nInfoFrame received correctly. Sending RR.\n");
-        supFrame[2] = (receiverNumber << 7) | 0x05;
-        supFrame[3] = supFrame[1] ^ supFrame[2];
-        write(fd, supFrame, 5);
+        supervisionFrame[2] = (rxSequenceNumber << 7) | 0x05;
+        supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
+        write(fd, supervisionFrame, 5);
     }
     
     else {
         printf("\nInfoFrame not received correctly. Error in data packet. Sending REJ.\n");
-        supFrame[2] = (receiverNumber << 7) | 0x01;
-        supFrame[3] = supFrame[1] ^ supFrame[2];
-        write(fd, supFrame, 5);
+        supervisionFrame[2] = (rxSequenceNumber << 7) | 0x01;
+        supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
+        write(fd, supervisionFrame, 5);
 
         return -1;
     }
 
     (*sizeOfPacket) = size;
 
-    index = 0;
+    pos = 0;
     
     for(int i=4; i<(*sizeOfPacket)-2; i++){
-        aux[index++] = packet[i];
+        aux[pos++] = packet[i];
     }
 
     
@@ -558,11 +578,9 @@ int llread(unsigned char *packet, int *sizeOfPacket)
         packet[i] = aux[i];
     }
 
+    //// ---- ///
 
-    if(receiverNumber){
-        receiverNumber = 0;
-    }
-    else {receiverNumber = 1;}
+    rxSequenceNumber ? rxSequenceNumber = 0 : rxSequenceNumber++; 
 
     return 1;
 }
