@@ -619,146 +619,136 @@ int llread(unsigned char *packet, int *sizeOfPacket)
 ////////////////////////////////////////////////
 int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
 {       
-    alarmCount = 0;
 
-    printf("\n------------------------------LLCLOSE------------------------------\n\n");
+    printf("\n ------ ATEMPTING INFORMATION TO CLOSE THE CONNECTION ------ \n\n");
 
     if(connectionParameters.role == LlRx){
 
-        unsigned char buf[6] = {0}, parcels[6] = {0};
-        unsigned char STOP = 0, UA = 0;
+        unsigned char newFrame[5] = {0};
 
-        buf[0] = 0x7E;
-        buf[1] = 0x03;
-        buf[2] = 0x0B;
-        buf[3] = buf[1]^buf[2];
-        buf[4] = 0x7E;
-        buf[5] = '\0';
+        //Assembles Disc Frame
+        unsigned char discFrame[5] = {0};
+        discFrame[0] = FRAME_FLAG;
+        discFrame[1] = FRAME_A;
+        discFrame[2] = DISCFRAME_C;
+        discFrame[3] = discFrame[1]^discFrame[2];
+        discFrame[4] = FRAME_FLAG;
 
+        STOP = FALSE; 
+        alarmCount = 0; //Resets alarm Count
 
-        while(!STOP){
-            int bytesread = read(fd, parcels, 5);
-            
-            parcels[5] = '\0';
-
-            if(bytesread==-1){
+        while(STOP == FALSE){
+            if(read(fd, newFrame, 5) == -1) //Reads pipe's contents
                 continue;
-            }
 
-
-            else if(strcasecmp(buf, parcels) == 0){
-                printf("\nDISC message received. Responding now.\n");
+            if(discFrame[1] == newFrame[1] && discFrame[2] == newFrame[2] && discFrame[3] == newFrame[3] && discFrame[4] == newFrame[4]){ //Asserts if Transmitter DISC Frame was Correct
+                printf("LLCLOSE (Rx): TRANSMITTER DISC FRAME RECEIVED SUCCESSFULY! SENDING REPLY...");
                 
-                buf[1] = 0x01;
-                buf[3] = buf[1]^buf[2];
+                //Assembles Reply Disc Frame (Only the Address Byte Changes in comparision with the Transmitter Disc Frame)
+                discFrame[1] = llClose_FRAME_A;
+                discFrame[3] = discFrame[1]^discFrame[2];
 
+                memset(newFrame, 0, 5); //Resets received Frame Buffer
+
+                //Sends Disc Frames as response until Transmitter Replies with a UA Frame
                 while(alarmCount < nTries){
 
-                    if(!alarmEnabled){
-                        printf("\nDISC message sent, %d bytes written\n", 5);
-                        write(fd, buf, 5);
+                    if(alarmEnabled == FALSE){
+                        int bytes = write(fd, discFrame, sizeof(discFrame));
+                        printf("%d bytes written\n", bytes);
                         startAlarm(timeout);
                     }
                     
-                    int bytesread = read(fd, parcels, 5);
-                    if(bytesread != -1 && parcels != 0 && parcels[0]==0x7E){
-                        //se o UA estiver errado 
-                        if(parcels[2] != 0x07 || (parcels[3] != (parcels[1]^parcels[2]))){
-                            printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                            alarmEnabled = FALSE;
-                            continue;
+                    if(read(fd, newFrame, 5) == -1)
+                        continue; 
+
+                    if(newFrame[0]==FRAME_FLAG){
+                        //Assert if UA Frame is valid
+                        if(newFrame[2] == UAcloseFRAME_C && (newFrame[3] == newFrame[1]^newFrame[2])){
+                            close(fd); //Closes the connection between the transmitter and the receiver safely
+                            alarmEnabled = FALSE; 
+                            printf("LLCLOSE (Rx): UA FRAME RECEIVED SUCCESSFULLY: %x %x %x %x %x. CLOSING THE CONNECTION ! \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
+                            return 1; 
                         }
-                        
-                        else{   
-                            printf("\nUA correctly received: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                            alarmEnabled = FALSE;
-                            close(fd);
-                            break;
+                        else{
+                            alarmEnabled = FALSE; 
+                            printf("LLCLOSE (Rx): THE RECEIVED UA FRAME WAS NOT CORRECT:  %x %x %x %x %x \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
+                            printf("LLCLOSE (Rx): PERFORMING ANOTHER ATTEMPT... \n"); 
+                            continue; 
                         }
                     }
 
                 }
 
                 if(alarmCount >= nTries){
-                    printf("\nAlarm limit reached, DISC message not sent\n");
+                    printf("LLCLOSE (Rx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
                     return -1;
                 }
                 
-                STOP = TRUE;
             }
-        
         }
-
     }
 
     else{
-        alarmCount = 0;
+        alarmCount = 0; //Resets alarm Count
 
-        unsigned char buf[6] = {0}, parcels[6] = {0};
+        unsigned char newFrame[5] = {0};
 
-        buf[0] = 0x7E;
-        buf[1] = 0x03;
-        buf[2] = 0x0B;
-        buf[3] = buf[1]^buf[2];
-        buf[4] = 0x7E;
-        buf[5] = '\0'; //assim posso usar o strcmp
+        //Assembles Disc Frame
+        unsigned char discFrame[5] = {0};
+        discFrame[0] = FRAME_FLAG;
+        discFrame[1] = FRAME_A;
+        discFrame[2] = DISCFRAME_C;
+        discFrame[3] = discFrame[1]^discFrame[2];
+        discFrame[4] = FRAME_FLAG;
+
+        unsigned char receivedDiscFrame[5] = {0}; 
+        receivedDiscFrame[0] = FRAME_FLAG;
+        receivedDiscFrame[1] = llClose_FRAME_A;
+        receivedDiscFrame[2] = DISCFRAME_C;
+        receivedDiscFrame[3] = receivedDiscFrame[1]^receivedDiscFrame[2];
+        receivedDiscFrame[4] = FRAME_FLAG;
 
         while(alarmCount < nTries){
 
             if(!alarmEnabled){
-                
-                int bytes = write(fd, buf, 5);
-                printf("\nDISC message sent, %d bytes written\n", bytes);
+                int bytes = write(fd, discFrame, 5);
+                printf("%d bytes written\n", bytes);
                 startAlarm(timeout);
             }
-
-            //sleep(2);
             
-            int bytesread = read(fd, parcels, 5);
+            if(read(fd, newFrame, 5) == -1)
+                continue; 
 
-            buf[1] = 0x01;
-            buf[3] = buf[1]^buf[2];
-            parcels[5] = '\0';
-
-            if(bytesread != -1 && parcels != 0 && parcels[0]==0x7E){
-                //se o DISC estiver errado 
-                if(strcasecmp(buf, parcels) != 0){
-                    printf("\nDISC not correct: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                    alarmEnabled = FALSE;
-                    continue;
+            if(newFrame[0]==0x7E){
+                if(receivedDiscFrame[1] == newFrame[1] && receivedDiscFrame[2] == newFrame[2] && receivedDiscFrame[3] == newFrame[3] && receivedDiscFrame[4] == newFrame[4]){
+                    alarmEnabled = FALSE; 
+                    memset(newFrame, 0, 5); //Resets received Frame in order to build the response UA Frame
+                    newFrame[0] = FRAME_FLAG; 
+                    newFrame[1] = llClose_FRAME_A; 
+                    newFrame[2] = UAcloseFRAME_C; 
+                    newFrame[3] = newFrame[1] ^ newFrame[2]; 
+                    newFrame[4] = FRAME_FLAG; 
+                    int bytes = write(fd, newFrame, 5); 
+                    printf("%d bytes written\n", bytes);
+                    close(fd); //Closes the tranmitter end of the pipe
+                    printf("LLCLOSE (Tx): UA FRAME SUCCESSFULLY SENT! CLOSING THE CONNECTION... \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]);
+                    return 1;  
                 }
-                
-                else{   
-                    printf("\nDISC correctly received: 0x%02x%02x%02x%02x%02x\n", parcels[0], parcels[1], parcels[2], parcels[3], parcels[4]);
-                    alarmEnabled = FALSE;
-                    
-                    buf[1] = 0x01;
-                    buf[2] = 0x07;
-                    buf[3] = buf[1]^buf[2];
-
-                    int bytes = write(fd, buf, 5);
-
-                    close(fd);
-
-                    printf("\nUA message sent, %d bytes written.\n\nI'm shutting off now, bye bye!\n", bytes);
-                    return 1;
-
+                else{
+                    alarmEnabled = FALSE; 
+                    printf("LLCLOSE (Tx): THE RECEIVED DISC FRAME WAS NOT CORRECT:  %x %x %x %x %x \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
+                    printf("LLCLOSE (T): PERFORMING ANOTHER ATTEMPT... \n"); 
+                    continue; 
                 }
             }
-
         }
-
         if(alarmCount >= nTries){
-            printf("\nAlarm limit reached, DISC message not sent\n");
-            close(fd);
+            printf("LLCLOSE (Tx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }
-
-
     }
 
-
-    return 1;
-
+    return -1;
 }
 

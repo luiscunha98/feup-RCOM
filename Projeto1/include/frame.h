@@ -41,11 +41,9 @@
 
 //DISC Frame info
 #define DISCFRAME_C 0x0B
-#define DISCFRAME_BCC 0x0A
 
 //UA llclose Frame info
 #define UAcloseFRAME_C 0x07
-#define UAcloseFRAME_BBC 0x06
 
 // -- STATE MACROS JUST TO MAKE IT MORE READABLE -- //
 #define STATE0 0
@@ -53,5 +51,6 @@
 #define STATE2 2
 #define STATE3 3
 #define STATE4 4
+#define STATE5 5
 
 #endif
