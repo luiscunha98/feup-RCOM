@@ -28,6 +28,9 @@
 #define IFRAME0 0x00
 #define IFRAME1 0x40
 
+//Data Packet Control
+#define DATA_CTRL 0x01
+
 //Receiver Ready(RR) Frame
 #define C_RR0 0x05
 #define C_RR1 0x85

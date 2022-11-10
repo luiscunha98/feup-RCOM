@@ -24,7 +24,7 @@ int txSequenceNumber = 0;  //Numero de sequencia transmissor
 int rxSequenceNumber = 1; //Numero de sequencia recetor
 
 //Auxiliary Variables
-int nTries, timeout, fd, lastFrameNumber = -1;
+int nTries, timeout, fd, lastSequenceNumber = -1;
 
 /// ---------- ALARM FUNCTIONS ---------- ///
 // Alarm function handler
@@ -383,13 +383,10 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet, int *sizeOfPacket)
 {       
-    printf("\n------------------------------LLREAD------------------------------\n\n");
+    printf("\n ------ ATEMPTING INFORMATION FRAME RECEPTION ------ \n\n");
 
     unsigned char receivedFrame[MAX_PAYLOAD_SIZE]={0}; 
     unsigned char supervisionFrame[5]={0}; 
-    // ----- AINDA NAO VI ESTA MERDA DESTAS VARIAVEIS ----- //
-    unsigned char BCC2=0x00, aux[MAX_PAYLOAD_SIZE] = {0}; 
-    int sizeInfo = 0; //Nao entendo esta linha
 
     //Assigns the expected Information Control Byte in order to avoid duplicates
     unsigned char ctrlByte = 0x00; 
@@ -410,6 +407,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
     int STOP = FALSE;
     char aux_buf[1] = {0}; //Auxiliary buffer to read the contents of the pipe
     int currState = 0; 
+    int size = 0; 
 
     //Reads all the info on the pipe
     while (STOP == FALSE){ 
@@ -424,7 +422,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             //Found a flag byte, so adds it to the received buffer
             if(aux_buf[0] == 0x7E){
                 currState = STATE1; //Goes into stage1 where it detects if it is not a random byte or it is actually a frame
-                receivedFrame[sizeInfo++] = aux_buf[0];
+                receivedFrame[size++] = aux_buf[0];
             }
             else
                 currState = STATE0; //Non relevant byte, so we will keep waiting for the desired flag byte
@@ -434,7 +432,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             //We are reading a frame
             if(aux_buf[0] != FRAME_FLAG){
                 currState = STATE2; //Advances to read frame content state
-                receivedFrame[sizeInfo++] = aux_buf[0];
+                receivedFrame[size++] = aux_buf[0];
             }
             // The byte read before was not part of a frame, so we go back to our starting point
             else{
@@ -447,11 +445,11 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             //Found end flag -> Frame read succesfully -> Exits State Machine
             if(aux_buf[0] == FRAME_FLAG){
                 STOP = TRUE;
-                receivedFrame[sizeInfo++] = aux_buf[0];
+                receivedFrame[size++] = aux_buf[0];
             }
             //We are still reading the frame content
             else{
-                receivedFrame[sizeInfo++] = aux_buf[0];
+                receivedFrame[size++] = aux_buf[0];
             }
             break;
         default:
@@ -466,7 +464,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
     supervisionFrame[1] = FRAME_A;
     supervisionFrame[4] = FRAME_FLAG;
 
-    //If Information Frame is Duplicate or Information Frame Header is Wrong we send a REJ frame as response
+    //If Information Frame is NOT DUPLICATE And Information Frame HEADER is Wrong we send a REJ frame as response
     if(receivedFrame[3] != (receivedFrame[1]^receivedFrame[2]) || receivedFrame[2] != ctrlByte){ 
         //Based on RX sequence number we assign the correct Control Field value corresponding to REJ0/REJ1
         switch (rxSequenceNumber)
@@ -498,7 +496,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
     int pos = 0; 
 
     //DeStuffing of the Received Frame content
-    for(int i=0; i<sizeInfo; i++){
+    for(int i=0; i<size; i++){
         if(receivedFrame[i] == ESC){ //Escape Byte Detected
             if(receivedFrame[i+1]==FLAG_ESC){ //Asserts if the the frame flag has been stuffed
                 packet[pos++] = FRAME_FLAG;
@@ -513,79 +511,103 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             packet[pos++] = receivedFrame[i];
     }
 
-    ///VER MELHOR A PARTIR DAQUI -> NAO PRESTEI A DEVIDA ATENÇÃO AINDA
 
-    //3º verificar que os BCCs estao certos
-    //4º enviar a mensagem de confirmacao de receçao, positiva se correu tudo bem, negativa se BCC ou assim esta mal
-    
-    //fazer as contas para confirmar o valor max do buffer
-
-    int size = 0; //tamanho da secçao de dados
-
-    if(packet[4]==0x01){
-        size = 256*packet[6]+packet[7]+4 +6; //+4 para contar com os bytes de controlo, numero de seq e tamanho
-        for(int i=4; i<size-2; i++){
-            BCC2 = BCC2 ^ packet[i];
-        }
+    //Calculate the correct received frame size by doing some math involving the headers and the data field size
+    if(packet[4]==DATA_CTRL){
+        //size = 256 * L2(packet[6])+L1(packet[7])->Data Field Size+4(bytes C(control byte), N(sequence number), L2, L1)+6(bytes FLAG, A, C, BCC1, BCC2, FLAG)
+        *sizeOfPacket = (256*packet[6])+packet[7]+4+6;
     }
-    
     else{
-        size += packet[6]+ 3 + 4; //+3 para contar com os bytes de C, T1 e L1 // +4 para contar com os bytes FLAG, A, C, BCC
-        size += packet[size+1] + 2 +2; //+2 para contar com T2 e L2 //+2 para contar com BCC2 e FLAG
-
-        for(int i=4; i<size-2; i++){
-            BCC2 = BCC2 ^ packet[i];
-        }
+        *sizeOfPacket += packet[6]+3+4; //L2+3(C, T1, L1)+4(FLAG, A, C, BCC)
+        *sizeOfPacket += packet[(*sizeOfPacket)+1]+2+2;//+2(T2,L2)+2(BCC2,FLAG)
     }
 
+    unsigned char BCC2=0x00; 
 
-    if(packet[size-2] == BCC2){
+    //Calculates Expected BCC2 of the data field
+    for(int i=4; i<(*sizeOfPacket)-2; i++){
+        BCC2 ^= packet[i];
+    }
 
-        if(packet[4]==0x01){
-            if(receivedFrame[5] == lastFrameNumber){
-                printf("\nInfoFrame received correctly. Repeated Frame. Sending RR.\n");
-                supervisionFrame[2] = (rxSequenceNumber << 7) | 0x05;
+    //Sends Reply Message (SuperVision Frame either RR if everything is OK or REJ if there is an error)
+    //Verifies BCC2 in order to verify if the data field is valid
+    if(packet[(*sizeOfPacket)-2] == BCC2){
+        //BCC2 is Correct 
+        //Assigning the correct value of RR(0/1)
+        switch (rxSequenceNumber)
+        {
+        case 0:
+            supervisionFrame[2] = C_RR0; 
+            break;
+        case 1: 
+            supervisionFrame[2] = C_RR1; 
+            break; 
+        default:
+            perror("LLREAD ERROR: Invalid transmiter sequence number\n"); 
+            break;
+        }
+
+        if(packet[4]==DATA_CTRL){
+            //Verifify if frame is duplicate
+            if(receivedFrame[5] == lastSequenceNumber){
+                supervisionFrame[2]; 
                 supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
+                printf("LLREAD: Information Frame Received Correctly. Duplicate Frame. Replying with RR. \n");
                 write(fd, supervisionFrame, 5);
                 return -1;
             }   
             else{
-                lastFrameNumber = receivedFrame[5];
+                lastSequenceNumber = receivedFrame[5]; //Update the sequence number
             }
         }
-        printf("\nInfoFrame received correctly. Sending RR.\n");
-        supervisionFrame[2] = (rxSequenceNumber << 7) | 0x05;
+        supervisionFrame[2]; 
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
-        write(fd, supervisionFrame, 5);
+        printf("LLREAD: Information Frame Received Correctly. New Frame. Replying with RR. \n");
+        write(fd, supervisionFrame, 5); 
     }
     
+    //Invalid Data Field so we discard it and reply with REJ
     else {
-        printf("\nInfoFrame not received correctly. Error in data packet. Sending REJ.\n");
-        supervisionFrame[2] = (rxSequenceNumber << 7) | 0x01;
+        //Assigning the correct value of REJ(0/1)
+        switch (rxSequenceNumber)
+        {
+        case 0:
+            supervisionFrame[2] = C_REJ0; 
+            break;
+        case 1: 
+            supervisionFrame[2] = C_REJ1; 
+            break; 
+        default:
+            perror("LLREAD ERROR: Invalid transmiter sequence number\n"); 
+            break;
+        }
+        supervisionFrame[2]; 
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
+        printf("LLREAD: Information Frame Was Not Received Correctly. Invalid Data Field. Replying with REJ. \n");
         write(fd, supervisionFrame, 5);
 
         return -1;
     }
 
-    (*sizeOfPacket) = size;
-
     pos = 0;
-    
+
+    unsigned char data[MAX_PAYLOAD_SIZE] = {0}; 
+
+    //Gets only the Data Field of the received Information Frame
     for(int i=4; i<(*sizeOfPacket)-2; i++){
-        aux[pos++] = packet[i];
+        data[pos++] = packet[i];
     }
 
-    
-    (*sizeOfPacket) = size - 6;
+    *packet = data; 
 
-    memset(packet,0,sizeof(packet));
+    memset(packet,0,sizeof(packet)); //Resets packet buffer in order to only store the data field
 
+    (*sizeOfPacket) -= 6; //Updates size of the packet removing (FLAG, A, C, BCC1, BCC2, FLAG)
+
+    //Stores only the data field of the information packet inside the packet that will be used to assemble the file in the application layer
     for(int i=0; i<(*sizeOfPacket); i++){
-        packet[i] = aux[i];
+        packet[i] = data[i];
     }
-
-    //// ---- ///
 
     rxSequenceNumber ? rxSequenceNumber = 0 : rxSequenceNumber++; 
 
