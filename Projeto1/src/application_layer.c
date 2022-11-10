@@ -49,6 +49,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate, in
     ll.baudRate = baudRate;
     ll.nRetransmissions = nTries;
     ll.timeout = timeout;
+    ll.fd = 0; 
     ll.role = tr;
 
     if(llopen(ll)==-1) {return;}

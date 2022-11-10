@@ -20,11 +20,12 @@ volatile int STOP = FALSE;
 //Alarm Global Variables 
 int alarmEnabled=0; 
 int alarmCount=0;
-int txSequenceNumber = 0;  //Numero de sequencia transmissor
-int rxSequenceNumber = 1; //Numero de sequencia recetor
 
 //Auxiliary Variables
-int nTries, timeout, fd, lastSequenceNumber = -1;
+int txSequenceNumber = 0;  //Numero de sequencia transmissor
+int rxSequenceNumber = 1; //Numero de sequencia recetor
+int lastSequenceNumber = -1;
+LinkLayer conParameters; 
 
 /// ---------- ALARM FUNCTIONS ---------- ///
 // Alarm function handler
@@ -57,7 +58,9 @@ int startAlarm(int timeout)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {   
-    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    conParameters = connectionParameters; 
+
+    int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY | O_NONBLOCK);
 
     alarmCount = 0;
 
@@ -66,6 +69,8 @@ int llopen(LinkLayer connectionParameters)
         perror(connectionParameters.serialPort);
         exit(-1);
     }
+
+    conParameters.fd = fd; 
 
     struct termios oldtio;
     struct termios newtio;
@@ -99,9 +104,6 @@ int llopen(LinkLayer connectionParameters)
 
     printf("New termios structure set\n");
     
-    nTries = connectionParameters.nRetransmissions;
-    timeout = connectionParameters.timeout;
-
     if(connectionParameters.role == LlTx){
 
         unsigned char setFrame[5] = {0}; 
@@ -115,17 +117,17 @@ int llopen(LinkLayer connectionParameters)
         setFrame[4] = FRAME_FLAG;
 
 
-        while(alarmCount < nTries){
+        while(alarmCount < conParameters.nRetransmissions){
 
             if(alarmEnabled == FALSE){
-                int bytes = write(fd, setFrame, 5);//Sends Set Frame
+                int bytes = write(conParameters.fd, setFrame, 5);//Sends Set Frame
                 sleep(1);  // Wait until all bytes have been written to the serial port
                 printf("%d bytes written\n", bytes);
-                startAlarm(timeout);
+                startAlarm(conParameters.timeout);
             }
             
             //Reads 5 bytes from the pipe
-            if(read(fd, uaFrame, 5) == -1)
+            if(read(conParameters.fd, uaFrame, 5) == -1)
                 continue; 
 
             if(uaFrame[0]==FRAME_FLAG){
@@ -144,7 +146,7 @@ int llopen(LinkLayer connectionParameters)
 
         }
 
-        if(alarmCount >= nTries){
+        if(alarmCount >= conParameters.nRetransmissions){
             printf("LLOPEN: MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }
@@ -161,7 +163,7 @@ int llopen(LinkLayer connectionParameters)
         while (STOP == FALSE)
         { 
             if(readByte){
-                if(read(fd, aux_buf, 1) <= 0)
+                if(read(conParameters.fd, aux_buf, 1) <= 0)
                     continue;
             }
         
@@ -247,7 +249,7 @@ int llopen(LinkLayer connectionParameters)
         uaFrame[3] = UAFRAME_BCC; 
         uaFrame[4] = FRAME_FLAG; 
 
-        int bytes = write(fd, uaFrame, 5); //Sends UA Frame back
+        int bytes = write(conParameters.fd, uaFrame, 5); //Sends UA Frame back
         sleep(1);  // Wait until all bytes have been written to the serial port
         printf("%d bytes written\n", bytes);
         return 1; 
@@ -335,12 +337,12 @@ int llwrite(const unsigned char *buf, int bufSize)
     while(STOP == FALSE){
 
         if(alarmEnabled == FALSE){
-            write(fd, info, posInfo); //Sends Information Frame
-            startAlarm(timeout);
+            write(conParameters.fd, info, posInfo); //Sends Information Frame
+            startAlarm(conParameters.timeout);
             printf("\nInformation Frame N(s=%d)\n", txSequenceNumber);
         }
         
-        if(read(fd, respFrame, 5) == -1)
+        if(read(conParameters.fd, respFrame, 5) == -1)
             continue; 
 
         //Receives response frame from the receiver
@@ -360,11 +362,11 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
 
         //Did not receive the expected ACK frame (RR0/RR1)
-        if(alarmCount >= nTries){
+        if(alarmCount >= conParameters.nRetransmissions){
             perror("\nLLWRITE: Number of attempts exceeded\n");
             STOP = TRUE;
             printf("\n ------ INFORMATION FRAME TRANSMITION FAILED ------ \n\n");
-            close(fd);
+            close(conParameters.fd);
             return -1;
         }
 
@@ -413,7 +415,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
     while (STOP == FALSE){ 
 
         //Reads the content sent by the transmitter byte by byte
-        if(read(fd, aux_buf, 1) <= 0) //If an error occurred while reading or didn't read any bytes
+        if(read(conParameters.fd, aux_buf, 1) <= 0) //If an error occurred while reading or didn't read any bytes
             continue; 
     
         switch (currState)
@@ -480,7 +482,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             break;
         }
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2]; //Calculates Supervision Frame BCC1
-        write(fd, supervisionFrame, 5); //Sends Reject Frame as Response
+        write(conParameters.fd, supervisionFrame, 5); //Sends Reject Frame as Response
 
         printf(" ----- SENT REJ FRAME CONTENT ----- \n");
 
@@ -553,7 +555,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
                 supervisionFrame[2]; 
                 supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
                 printf("LLREAD: Information Frame Received Correctly. Duplicate Frame. Replying with RR. \n");
-                write(fd, supervisionFrame, 5);
+                write(conParameters.fd, supervisionFrame, 5);
                 return -1;
             }   
             else{
@@ -563,7 +565,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
         supervisionFrame[2]; 
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
         printf("LLREAD: Information Frame Received Correctly. New Frame. Replying with RR. \n");
-        write(fd, supervisionFrame, 5); 
+        write(conParameters.fd, supervisionFrame, 5); 
     }
     
     //Invalid Data Field so we discard it and reply with REJ
@@ -584,7 +586,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
         supervisionFrame[2]; 
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
         printf("LLREAD: Information Frame Was Not Received Correctly. Invalid Data Field. Replying with REJ. \n");
-        write(fd, supervisionFrame, 5);
+        write(conParameters.fd, supervisionFrame, 5);
 
         return -1;
     }
@@ -638,7 +640,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
         alarmCount = 0; //Resets alarm Count
 
         while(STOP == FALSE){
-            if(read(fd, newFrame, 5) == -1) //Reads pipe's contents
+            if(read(conParameters.fd, newFrame, 5) == -1) //Reads pipe's contents
                 continue;
 
             if(discFrame[1] == newFrame[1] && discFrame[2] == newFrame[2] && discFrame[3] == newFrame[3] && discFrame[4] == newFrame[4]){ //Asserts if Transmitter DISC Frame was Correct
@@ -651,21 +653,21 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                 memset(newFrame, 0, 5); //Resets received Frame Buffer
 
                 //Sends Disc Frames as response until Transmitter Replies with a UA Frame
-                while(alarmCount < nTries){
+                while(alarmCount < conParameters.nRetransmissions){
 
                     if(alarmEnabled == FALSE){
-                        int bytes = write(fd, discFrame, sizeof(discFrame));
+                        int bytes = write(conParameters.fd, discFrame, sizeof(discFrame));
                         printf("%d bytes written\n", bytes);
-                        startAlarm(timeout);
+                        startAlarm(conParameters.timeout);
                     }
                     
-                    if(read(fd, newFrame, 5) == -1)
+                    if(read(conParameters.fd, newFrame, 5) == -1)
                         continue; 
 
                     if(newFrame[0]==FRAME_FLAG){
                         //Assert if UA Frame is valid
                         if(newFrame[2] == UAcloseFRAME_C && (newFrame[3] == newFrame[1]^newFrame[2])){
-                            close(fd); //Closes the connection between the transmitter and the receiver safely
+                            close(conParameters.fd); //Closes the connection between the transmitter and the receiver safely
                             alarmEnabled = FALSE; 
                             printf("LLCLOSE (Rx): UA FRAME RECEIVED SUCCESSFULLY: %x %x %x %x %x. CLOSING THE CONNECTION ! \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
                             return 1; 
@@ -680,7 +682,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
 
                 }
 
-                if(alarmCount >= nTries){
+                if(alarmCount >= conParameters.nRetransmissions){
                     printf("LLCLOSE (Rx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
                     return -1;
                 }
@@ -709,15 +711,15 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
         receivedDiscFrame[3] = receivedDiscFrame[1]^receivedDiscFrame[2];
         receivedDiscFrame[4] = FRAME_FLAG;
 
-        while(alarmCount < nTries){
+        while(alarmCount < conParameters.nRetransmissions){
 
             if(!alarmEnabled){
-                int bytes = write(fd, discFrame, 5);
+                int bytes = write(conParameters.fd, discFrame, 5);
                 printf("%d bytes written\n", bytes);
-                startAlarm(timeout);
+                startAlarm(conParameters.timeout);
             }
             
-            if(read(fd, newFrame, 5) == -1)
+            if(read(conParameters.fd, newFrame, 5) == -1)
                 continue; 
 
             if(newFrame[0]==0x7E){
@@ -729,9 +731,9 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                     newFrame[2] = UAcloseFRAME_C; 
                     newFrame[3] = newFrame[1] ^ newFrame[2]; 
                     newFrame[4] = FRAME_FLAG; 
-                    int bytes = write(fd, newFrame, 5); 
+                    int bytes = write(conParameters.fd, newFrame, 5); 
                     printf("%d bytes written\n", bytes);
-                    close(fd); //Closes the tranmitter end of the pipe
+                    close(conParameters.fd); //Closes the tranmitter end of the pipe
                     printf("LLCLOSE (Tx): UA FRAME SUCCESSFULLY SENT! CLOSING THE CONNECTION... \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]);
                     return 1;  
                 }
@@ -743,7 +745,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                 }
             }
         }
-        if(alarmCount >= nTries){
+        if(alarmCount >= conParameters.nRetransmissions){
             printf("LLCLOSE (Tx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }

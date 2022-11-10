@@ -4,7 +4,13 @@
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
 
+// SIZE of maximum acceptable payload.
+// Maximum number of bytes that application layer should send to link layer
 #define MAX_PAYLOAD_SIZE 1000
+
+// MISC
+#define FALSE 0
+#define TRUE 1
 
 typedef enum
 {
@@ -19,15 +25,8 @@ typedef struct
     int baudRate;
     int nRetransmissions;
     int timeout;
+    int fd; 
 } LinkLayer;
-
-// SIZE of maximum acceptable payload.
-// Maximum number of bytes that application layer should send to link layer
-#define MAX_PAYLOAD_SIZE 1000
-
-// MISC
-#define FALSE 0
-#define TRUE 1
 
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return "1" on success or "-1" on error.
