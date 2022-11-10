@@ -4,7 +4,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <termios.h>
-#include <math.h>
 #include <stdio.h>
 #include <time.h>
 #include <signal.h>
@@ -117,7 +116,7 @@ int llopen(LinkLayer connectionParameters)
         setFrame[4] = FRAME_FLAG;
 
 
-        while(alarmCount < conParameters.nRetransmissions){
+        while(alarmCount < conParameters.numTransmissions){
 
             if(alarmEnabled == FALSE){
                 int bytes = write(conParameters.fd, setFrame, 5);//Sends Set Frame
@@ -146,7 +145,7 @@ int llopen(LinkLayer connectionParameters)
 
         }
 
-        if(alarmCount >= conParameters.nRetransmissions){
+        if(alarmCount >= conParameters.numTransmissions){
             printf("LLOPEN: MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }
@@ -263,7 +262,7 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    printf("\n ------ ATEMPTING INFORMATION FRAME TRANSMITION ------ \n\n");
+    printf(" ------ ATEMPTING INFORMATION FRAME TRANSMITION ------ \n");
 
     alarmCount = 0;
 
@@ -362,17 +361,17 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
 
         //Did not receive the expected ACK frame (RR0/RR1)
-        if(alarmCount >= conParameters.nRetransmissions){
-            perror("\nLLWRITE: Number of attempts exceeded\n");
+        if(alarmCount >= conParameters.numTransmissions){
+            perror("LLWRITE: Number of attempts exceeded\n");
             STOP = TRUE;
-            printf("\n ------ INFORMATION FRAME TRANSMITION FAILED ------ \n\n");
+            printf(" ------ INFORMATION FRAME TRANSMITION FAILED ------ \n");
             close(conParameters.fd);
             return -1;
         }
 
     }
 
-    printf("\n ------ INFORMATION FRAME TRANSMITION SUCCESSFULLY ------ \n\n");
+    printf(" ------ INFORMATION FRAME TRANSMITION SUCCESSFULLY ------ \n");
 
     //Updates sequence number
     txSequenceNumber ? txSequenceNumber = 0 : txSequenceNumber++; 
@@ -385,7 +384,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet, int *sizeOfPacket)
 {       
-    printf("\n ------ ATEMPTING INFORMATION FRAME RECEPTION ------ \n\n");
+    printf(" ------ ATEMPTING INFORMATION FRAME RECEPTION ------ \n");
 
     unsigned char receivedFrame[MAX_PAYLOAD_SIZE]={0}; 
     unsigned char supervisionFrame[5]={0}; 
@@ -554,7 +553,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
             if(receivedFrame[5] == lastSequenceNumber){
                 supervisionFrame[2]; 
                 supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
-                printf("LLREAD: Information Frame Received Correctly. Duplicate Frame. Replying with RR. \n");
+                printf("LLREAD: Information Frame Received Correctly. \n Duplicate Frame. \n Replying with RR. \n");
                 write(conParameters.fd, supervisionFrame, 5);
                 return -1;
             }   
@@ -564,7 +563,7 @@ int llread(unsigned char *packet, int *sizeOfPacket)
         }
         supervisionFrame[2]; 
         supervisionFrame[3] = supervisionFrame[1] ^ supervisionFrame[2];
-        printf("LLREAD: Information Frame Received Correctly. New Frame. Replying with RR. \n");
+        printf("LLREAD: Information Frame Received Correctly. \n New Frame. \n Replying with RR. \n");
         write(conParameters.fd, supervisionFrame, 5); 
     }
     
@@ -619,10 +618,10 @@ int llread(unsigned char *packet, int *sizeOfPacket)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
+int llclose(LinkLayer connectionParameters)
 {       
 
-    printf("\n ------ ATEMPTING INFORMATION TO CLOSE THE CONNECTION ------ \n\n");
+    printf(" ------ ATEMPTING INFORMATION TO CLOSE THE CONNECTION ------ \n");
 
     if(connectionParameters.role == LlRx){
 
@@ -644,7 +643,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                 continue;
 
             if(discFrame[1] == newFrame[1] && discFrame[2] == newFrame[2] && discFrame[3] == newFrame[3] && discFrame[4] == newFrame[4]){ //Asserts if Transmitter DISC Frame was Correct
-                printf("LLCLOSE (Rx): TRANSMITTER DISC FRAME RECEIVED SUCCESSFULY! SENDING REPLY...");
+                printf("LLCLOSE (Rx): TRANSMITTER DISC FRAME RECEIVED SUCCESSFULY! \n SENDING REPLY... \n");
                 
                 //Assembles Reply Disc Frame (Only the Address Byte Changes in comparision with the Transmitter Disc Frame)
                 discFrame[1] = llClose_FRAME_A;
@@ -653,7 +652,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                 memset(newFrame, 0, 5); //Resets received Frame Buffer
 
                 //Sends Disc Frames as response until Transmitter Replies with a UA Frame
-                while(alarmCount < conParameters.nRetransmissions){
+                while(alarmCount < conParameters.numTransmissions){
 
                     if(alarmEnabled == FALSE){
                         int bytes = write(conParameters.fd, discFrame, sizeof(discFrame));
@@ -669,7 +668,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                         if(newFrame[2] == UAcloseFRAME_C && (newFrame[3] == newFrame[1]^newFrame[2])){
                             close(conParameters.fd); //Closes the connection between the transmitter and the receiver safely
                             alarmEnabled = FALSE; 
-                            printf("LLCLOSE (Rx): UA FRAME RECEIVED SUCCESSFULLY: %x %x %x %x %x. CLOSING THE CONNECTION ! \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
+                            printf("LLCLOSE (Rx): UA FRAME RECEIVED SUCCESSFULLY: %x %x %x %x %x. \n CLOSING THE CONNECTION... \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]); 
                             return 1; 
                         }
                         else{
@@ -682,7 +681,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
 
                 }
 
-                if(alarmCount >= conParameters.nRetransmissions){
+                if(alarmCount >= conParameters.numTransmissions){
                     printf("LLCLOSE (Rx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
                     return -1;
                 }
@@ -711,7 +710,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
         receivedDiscFrame[3] = receivedDiscFrame[1]^receivedDiscFrame[2];
         receivedDiscFrame[4] = FRAME_FLAG;
 
-        while(alarmCount < conParameters.nRetransmissions){
+        while(alarmCount < conParameters.numTransmissions){
 
             if(!alarmEnabled){
                 int bytes = write(conParameters.fd, discFrame, 5);
@@ -734,7 +733,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                     int bytes = write(conParameters.fd, newFrame, 5); 
                     printf("%d bytes written\n", bytes);
                     close(conParameters.fd); //Closes the tranmitter end of the pipe
-                    printf("LLCLOSE (Tx): UA FRAME SUCCESSFULLY SENT! CLOSING THE CONNECTION... \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]);
+                    printf("LLCLOSE (Tx): UA FRAME SUCCESSFULLY SENT! \n CLOSING THE CONNECTION... \n", newFrame[0], newFrame[1], newFrame[2], newFrame[3], newFrame[4]);
                     return 1;  
                 }
                 else{
@@ -745,7 +744,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime)
                 }
             }
         }
-        if(alarmCount >= conParameters.nRetransmissions){
+        if(alarmCount >= conParameters.numTransmissions){
             printf("LLCLOSE (Tx): MAX ATTEMPTS REACHED ! RETURNING WITH ERROR\n");
             return -1;
         }

@@ -20,10 +20,10 @@ typedef enum
 
 typedef struct
 {
-    char serialPort[50];
+    char serialPort[20];
     LinkLayerRole role;
     int baudRate;
-    int nRetransmissions;
+    int numTransmissions;
     int timeout;
     int fd; 
 } LinkLayer;
@@ -43,7 +43,7 @@ int llread(unsigned char *packet, int *sizeOfPacket);
 // Close previously opened connection.
 // if showStatistics == TRUE, link layer should print statistics in the console on close.
 // Return "1" on success or "-1" on error.
-int llclose(int showStatistics, LinkLayer connectionParameters, float runTime);
+int llclose(LinkLayer connectionParameters);
 
 
 #endif // _LINK_LAYER_H_
