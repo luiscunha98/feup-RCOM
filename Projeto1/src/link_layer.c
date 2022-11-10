@@ -333,7 +333,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     info[posInfo++]=FRAME_FLAG; //Finalizes info packet build by adding the Flag at the end
 
-    while(STOP == FALSE){
+    while(alarmCount < conParameters.numTransmissions){
 
         if(alarmEnabled == FALSE){
             write(conParameters.fd, info, posInfo); //Sends Information Frame
@@ -352,31 +352,28 @@ int llwrite(const unsigned char *buf, int bufSize)
         //Verifies if response has a valid BCC1 and Response Control Field is correct according to current Tx frame sequence number
         if((respFrame[2] == controlFieldResp) && (respFrame[3] = respFrame[1]^respFrame[2])){
             printf("ACK is Correct: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
-            STOP = TRUE;
             alarmEnabled = FALSE;
+            //Updates sequence number
+            txSequenceNumber ? txSequenceNumber = 0 : txSequenceNumber++; 
+            return 0;
         }
         else{
             printf("ACK is Wrong: %x %x %x %x %x \n", respFrame[0], respFrame[1], respFrame[2], respFrame[3], respFrame[4]);
             alarmEnabled = FALSE;
         }
+    }
 
-        //Did not receive the expected ACK frame (RR0/RR1)
-        if(alarmCount >= conParameters.numTransmissions){
-            perror("LLWRITE: Number of attempts exceeded\n");
-            STOP = TRUE;
-            printf(" ------ INFORMATION FRAME TRANSMITION FAILED ------ \n");
-            close(conParameters.fd);
-            return -1;
-        }
-
+    //Did not receive the expected ACK frame (RR0/RR1)
+    if(alarmCount >= conParameters.numTransmissions){
+        perror("LLWRITE: Number of attempts exceeded\n");
+        printf(" ------ INFORMATION FRAME TRANSMITION FAILED ------ \n");
+        close(conParameters.fd);
+        return -1;
     }
 
     printf(" ------ INFORMATION FRAME TRANSMITION SUCCESSFULLY ------ \n");
 
-    //Updates sequence number
-    txSequenceNumber ? txSequenceNumber = 0 : txSequenceNumber++; 
-
-    return 0;
+    return -1; 
 }
 
 ////////////////////////////////////////////////
