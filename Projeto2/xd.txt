@@ -1,0 +1,131 @@
+Building configuration...
+
+Current configuration : 3269 bytes
+!
+version 12.4
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+!
+hostname gnu-rtr4
+!
+boot-start-marker
+boot-end-marker
+!
+! card type command needed for slot/vwic-slot 0/0
+logging message-counter syslog
+logging buffered 51200 warnings
+!
+no aaa new-model
+dot11 syslog
+ip source-route
+!
+!
+!
+!         
+ip cef    
+no ip domain lookup
+no ipv6 cef
+!         
+multilink bundle-name authenticated
+!         
+!         
+crypto pki trustpoint TP-self-signed-103146917
+ enrollment selfsigned
+ subject-name cn=IOS-Self-Signed-Certificate-103146917
+ revocation-check none
+ rsakeypair TP-self-signed-103146917
+!         
+!         
+crypto pki certificate chain TP-self-signed-103146917
+ certificate self-signed 01
+  3082023E 308201A7 A0030201 02020101 300D0609 2A864886 F70D0101 04050030 
+  30312E30 2C060355 04031325 494F532D 53656C66 2D536967 6E65642D 43657274 
+  69666963 6174652D 31303331 34363931 37301E17 0D373330 32313030 37343334 
+  385A170D 32303031 30313030 30303030 5A303031 2E302C06 03550403 1325494F 
+  532D5365 6C662D53 69676E65 642D4365 72746966 69636174 652D3130 33313436 
+  39313730 819F300D 06092A86 4886F70D 01010105 0003818D 00308189 02818100 
+  A99FCCBF 3C81E501 66237191 15166E92 23618DCA BB2C940C 6C4C4435 5651ACF7 
+  117B6766 FDF35197 E33CA332 E76EDEF6 5049A151 A4A444EE 3067F5C6 9CB58609 
+  FBB2FFBA 2F9119BD 8773D90E 607F24A2 72D8EF6A BC69BF20 BB35E073 6DE0270A 
+  47B3B13E 297C9826 670A119C BE4549AB 30AF2E3C FF4DC507 BFCC313A FFD22A83 
+  02030100 01A36830 66300F06 03551D13 0101FF04 05300301 01FF3013 0603551D 
+  11040C30 0A820867 6E752D72 74723430 1F060355 1D230418 30168014 3DF7C4D5 
+  AA762B2E A4252B2E D061507D D32A3C49 301D0603 551D0E04 1604143D F7C4D5AA 
+  762B2EA4 252B2ED0 61507DD3 2A3C4930 0D06092A 864886F7 0D010104 05000381 
+  810073C6 2FFAAC96 B744A55A C7EE4E7E 4B47C82E 7B3554B0 D6F2297A E53CFB7C 
+  FE5DB87E E75E552E 5B04A53D C2EF6791 20EF929B 64932846 00DB82D2 290E1212 
+  5FBA5E3F 76022292 6F32FEDC 69212AE2 B354962C 0A0CF6FA 09CD195C 7FC583B7 
+  9177A269 3C017BD9 AC83CE14 7929A75D E5AE902F 3CE960E3 0DF8A092 7EEF1A2F FE5B
+        quit
+!         
+!         
+username root privilege 15 secret 5 $1$..Xw$pKLKdhwTnMGJYyt3G1NQN/
+archive   
+ log config
+  hidekeys
+!         
+!         
+!         
+!         
+!         
+!         
+!         
+!         
+interface FastEthernet0/0
+ ip address 172.16.41.254 255.255.255.0
+ ip nat inside
+ ip virtual-reassembly
+ duplex auto
+ speed auto
+!         
+interface FastEthernet0/1
+ ip address 172.16.2.49 255.255.255.0
+ ip nat outside
+ ip virtual-reassembly
+ duplex auto
+ speed auto
+!         
+ip forward-protocol nd
+ip route 0.0.0.0 0.0.0.0 172.16.2.254
+ip route 172.16.40.0 255.255.255.0 172.16.41.253
+ip http server
+ip http access-class 23
+ip http authentication local
+ip http secure-server
+ip http timeout-policy idle 60 life 86400 requests 10000
+!         
+!         
+ip nat pool ovrld 172.16.2.49 172.16.2.49 prefix-length 24
+ip nat inside source list 1 pool ovrld overload
+!         
+access-list 1 permit 172.16.40.0 0.0.0.7
+access-list 1 permit 172.16.41.0 0.0.0.7
+access-list 23 permit 10.10.10.0 0.0.0.7
+access-list 23 permit 172.16.0.0 0.0.1.255
+!         
+!         
+!         
+!         
+!         
+!         
+control-plane
+!         
+!         
+!         
+line con 0
+ login local
+line aux 0
+line vty 0 4
+ access-class 23 in
+ privilege level 15
+ login local
+ transport input telnet ssh
+line vty 5 15
+ access-class 23 in
+ privilege level 15
+ login local
+ transport input telnet ssh
+!         
+scheduler allocate 20000 1000
+end  
